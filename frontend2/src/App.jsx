@@ -32,7 +32,7 @@ const chartShortSymbol = 'GOOG'
 const chartDescription = '谷歌-C'
 const chartMarketLabel = '美股'
 const chartExchange = 'LONGBRIDGE'
-const chartUdfBaseUrl = (import.meta.env.VITE_UDF_BASE_URL || 'http://127.0.0.1:5101').replace(/\/$/, '')
+const chartUdfBaseUrl = (import.meta.env.VITE_UDF_BASE_URL || 'http://127.0.0.1:5200').replace(/\/$/, '')
 const timeframes = [
   { label: '1分', resolution: '1' },
   { label: '5分', resolution: '5' },

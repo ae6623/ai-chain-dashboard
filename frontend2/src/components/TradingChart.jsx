@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 const libraryPath = '/charting_library/'
 const libraryScriptPath = `${libraryPath}charting_library.js`
-const defaultUdfBaseUrl = 'http://127.0.0.1:5101'
+const defaultUdfBaseUrl = 'http://127.0.0.1:5200'
 const defaultDatafeedConfig = {
   supported_resolutions: ['1', '5', '15', '30', '60', '240', '1D', '1W', '1M'],
   supports_group_request: false,
