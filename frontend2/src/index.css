@@ -1,0 +1,90 @@
+:root {
+  --bg-main: #070a0f;
+  --bg-panel: #12161e;
+  --bg-panel-2: #171c25;
+  --border-color: #242b36;
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --text-main: #f4f7fb;
+  --text-soft: #c0c7d6;
+  --text-dim: #758096;
+  --accent-blue: #4d8dff;
+  --accent-green: #30d17c;
+  --accent-red: #ff5b6e;
+  --font-body: 'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-display: 'Space Grotesk', 'IBM Plex Sans', 'PingFang SC', sans-serif;
+  color: var(--text-main);
+  font-family: var(--font-body);
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--bg-main);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  background: var(--bg-main);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top right, rgba(77, 141, 255, 0.1), transparent 22%),
+    radial-gradient(circle at bottom left, rgba(255, 91, 110, 0.08), transparent 20%),
+    linear-gradient(180deg, #0b0f15, #06080d 60%);
+  color: var(--text-main);
+}
+
+body.is-resizing-columns,
+body.is-resizing-columns * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+body,
+button,
+input {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 1200px) {
+  body {
+    overflow: auto;
+  }
+}
