@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 # 确保当前目录在 sys.path 中
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from models import db, Symbol, Watchlist
+from models import db, Symbol, Watchlist, WatchlistItem
 from form import F_str, F_int, form_validator, FormError
 from const import SymbolType, Provider
 from symbol_registry import sync_longbridge_symbol
@@ -177,6 +177,82 @@ def parse_watchlist_payload(payload, partial=False):
         raise ValueError('at least one field is required')
 
     return cleaned
+
+
+def parse_watchlist_item_payload(payload, partial=False):
+    if payload is None or not isinstance(payload, dict):
+        raise ValueError('request body must be a JSON object')
+
+    cleaned = {}
+
+    if 'symbol' in payload:
+        symbol = payload.get('symbol')
+        if not isinstance(symbol, str):
+            raise ValueError('symbol must be a string')
+        symbol = symbol.strip().upper()
+        if not symbol:
+            raise ValueError('symbol cannot be blank')
+        if len(symbol) > 32:
+            raise ValueError('symbol length must be between 1 and 32 characters')
+        cleaned['symbol'] = symbol
+    elif not partial:
+        raise ValueError('symbol is required')
+
+    if 'displayName' in payload:
+        display_name = payload.get('displayName')
+        if display_name is None:
+            cleaned['displayName'] = None
+        else:
+            if not isinstance(display_name, str):
+                raise ValueError('displayName must be a string or null')
+            display_name = display_name.strip()
+            if len(display_name) > 128:
+                raise ValueError('displayName length must be 128 characters or fewer')
+            cleaned['displayName'] = display_name or None
+
+    if 'sort' in payload:
+        sort = payload.get('sort')
+        if not isinstance(sort, int) or isinstance(sort, bool):
+            raise ValueError('sort must be a non-negative integer')
+        if sort < 0:
+            raise ValueError('sort must be a non-negative integer')
+        cleaned['sort'] = sort
+
+    if partial and not cleaned:
+        raise ValueError('at least one field is required')
+
+    return cleaned
+
+
+def get_watchlist_or_error(watchlist_id):
+    watchlist = Watchlist.query.get(watchlist_id)
+    if watchlist is None:
+        return None, api_v1_error(404100, 'watchlist not found')
+    return watchlist, None
+
+
+def resolve_watchlist_item_symbol(symbol):
+    normalized_symbol = (symbol or '').strip().upper()
+    if not normalized_symbol:
+        return None
+
+    symbol_obj = Symbol.query.filter(db.func.upper(Symbol.symbol) == normalized_symbol).first()
+    if symbol_obj is not None:
+        return symbol_obj
+
+    ticker_obj = Symbol.query.filter(db.func.upper(Symbol.ticker) == normalized_symbol).first()
+    if ticker_obj is not None:
+        return ticker_obj
+
+    return validate_symbol(normalized_symbol)
+
+
+def sync_watchlist_item_count(watchlist_id):
+    watchlist = Watchlist.query.get(watchlist_id)
+    if watchlist is None:
+        return None
+    watchlist.item_count = WatchlistItem.count_for_watchlist(watchlist_id)
+    return watchlist
 
 
 def ensure_single_default(target_watchlist=None):
@@ -388,6 +464,104 @@ def delete_watchlist(watchlist_id):
     db.session.delete(watchlist)
     if replacement:
         replacement.is_default = True
+    db.session.commit()
+
+    return api_v1_success(True)
+
+
+@api_v1_bp.route('/watchlists/<string:watchlist_id>/items', methods=['GET'])
+def list_watchlist_items(watchlist_id):
+    watchlist, error_response = get_watchlist_or_error(watchlist_id)
+    if error_response is not None:
+        return error_response
+
+    items = WatchlistItem.query.filter_by(watchlist_id=watchlist.id).order_by(
+        WatchlistItem.sort.asc(), WatchlistItem.created_at.asc()
+    ).all()
+    return api_v1_success([item.to_api_dict() for item in items])
+
+
+@api_v1_bp.route('/watchlists/<string:watchlist_id>/items', methods=['POST'])
+def create_watchlist_item(watchlist_id):
+    watchlist, error_response = get_watchlist_or_error(watchlist_id)
+    if error_response is not None:
+        return error_response
+
+    try:
+        payload = parse_watchlist_item_payload(request.get_json(silent=True), partial=False)
+    except ValueError as exc:
+        return api_v1_error(400100, str(exc))
+
+    symbol_obj = resolve_watchlist_item_symbol(payload['symbol'])
+    resolved_symbol = symbol_obj.symbol if symbol_obj is not None else payload['symbol']
+    item = WatchlistItem(
+        id=f"wli_{uuid4().hex[:12]}",
+        watchlist_id=watchlist.id,
+        symbol=resolved_symbol,
+        display_name=payload.get('displayName'),
+        sort=payload.get('sort', WatchlistItem.get_next_sort(watchlist.id)),
+    )
+
+    try:
+        db.session.add(item)
+        db.session.flush()
+        sync_watchlist_item_count(watchlist.id)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return api_v1_error(409101, 'watchlist item already exists')
+
+    return api_v1_success(item.to_api_dict(symbol_obj=symbol_obj))
+
+
+@api_v1_bp.route('/watchlists/<string:watchlist_id>/items/<string:item_id>', methods=['PATCH'])
+def update_watchlist_item(watchlist_id, item_id):
+    watchlist, error_response = get_watchlist_or_error(watchlist_id)
+    if error_response is not None:
+        return error_response
+
+    item = WatchlistItem.query.filter_by(id=item_id, watchlist_id=watchlist.id).first()
+    if item is None:
+        return api_v1_error(404101, 'watchlist item not found')
+
+    try:
+        payload = parse_watchlist_item_payload(request.get_json(silent=True), partial=True)
+    except ValueError as exc:
+        return api_v1_error(400100, str(exc))
+
+    symbol_obj = None
+    if 'symbol' in payload:
+        symbol_obj = resolve_watchlist_item_symbol(payload['symbol'])
+        item.symbol = symbol_obj.symbol if symbol_obj is not None else payload['symbol']
+    if 'displayName' in payload:
+        item.display_name = payload['displayName']
+    if 'sort' in payload:
+        item.sort = payload['sort']
+
+    try:
+        db.session.flush()
+        sync_watchlist_item_count(watchlist.id)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return api_v1_error(409101, 'watchlist item already exists')
+
+    return api_v1_success(item.to_api_dict(symbol_obj=symbol_obj))
+
+
+@api_v1_bp.route('/watchlists/<string:watchlist_id>/items/<string:item_id>', methods=['DELETE'])
+def delete_watchlist_item(watchlist_id, item_id):
+    watchlist, error_response = get_watchlist_or_error(watchlist_id)
+    if error_response is not None:
+        return error_response
+
+    item = WatchlistItem.query.filter_by(id=item_id, watchlist_id=watchlist.id).first()
+    if item is None:
+        return api_v1_error(404101, 'watchlist item not found')
+
+    db.session.delete(item)
+    db.session.flush()
+    sync_watchlist_item_count(watchlist.id)
     db.session.commit()
 
     return api_v1_success(True)

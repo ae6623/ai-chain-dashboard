@@ -64,6 +64,60 @@ class Watchlist(db.Model):
         return payload
 
 
+class WatchlistItem(db.Model):
+    __tablename__ = 'watchlist_item'
+
+    id = db.Column(db.String(64), primary_key=True)
+    watchlist_id = db.Column(db.String(64), db.ForeignKey('watchlist.id', ondelete='CASCADE'), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    symbol = db.Column(db.String(32), nullable=False)
+    display_name = db.Column(db.String(128), nullable=True)
+    sort = db.Column(db.Integer, nullable=False, default=0)
+
+    watchlist = db.relationship('Watchlist', backref=db.backref('items', lazy='dynamic', cascade='all, delete-orphan'))
+
+    __table_args__ = (
+        UniqueConstraint('watchlist_id', 'symbol', name='uq_watchlist_item_symbol'),
+        Index('idx_watchlist_item_watchlist_sort', 'watchlist_id', 'sort'),
+        Index('idx_watchlist_item_symbol', 'symbol'),
+    )
+
+    @classmethod
+    def get_next_sort(cls, watchlist_id):
+        max_sort = db.session.query(db.func.max(cls.sort)).filter_by(watchlist_id=watchlist_id).scalar()
+        return 0 if max_sort is None else max_sort + 1
+
+    @classmethod
+    def count_for_watchlist(cls, watchlist_id):
+        return cls.query.filter_by(watchlist_id=watchlist_id).count()
+
+    def to_api_dict(self, symbol_obj=None):
+        resolved_symbol = symbol_obj or Symbol.query.filter_by(symbol=self.symbol).first()
+        display_name = self.display_name or getattr(resolved_symbol, 'description', None) or self.symbol
+        return {
+            'id': self.id,
+            'watchlistId': self.watchlist_id,
+            'symbol': self.symbol,
+            'displayName': self.display_name,
+            'name': display_name,
+            'ticker': getattr(resolved_symbol, 'ticker', self.symbol),
+            'fullName': getattr(resolved_symbol, 'full_name', self.symbol),
+            'description': getattr(resolved_symbol, 'description', display_name),
+            'exchange': getattr(resolved_symbol, 'exchange', ''),
+            'type': getattr(resolved_symbol, 'type', ''),
+            'sort': self.sort,
+            'createdAt': to_iso8601(self.created_at),
+            'updatedAt': to_iso8601(self.updated_at),
+        }
+
+
 class Symbol(db.Model):
     __tablename__ = 'symbol'
 

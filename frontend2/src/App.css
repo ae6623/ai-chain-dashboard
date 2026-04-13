@@ -148,6 +148,14 @@
   font-size: 12px;
 }
 
+.tiny-action.ghost {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tiny-action.danger {
+  color: #ff8f8f;
+}
+
 .board-tabs {
   display: flex;
   gap: 8px;
@@ -197,6 +205,66 @@
   padding-top: 12px;
 }
 
+.watchlist-item-editor {
+  display: grid;
+  gap: 12px;
+  margin: 0 16px 14px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.watchlist-item-editor-head,
+.watchlist-item-editor-actions,
+.watchlist-row-actions,
+.watchlist-empty-state {
+  display: flex;
+  align-items: center;
+}
+
+.watchlist-item-editor-head,
+.watchlist-item-editor-actions {
+  justify-content: space-between;
+}
+
+.watchlist-item-editor-head strong,
+.watchlist-empty-state strong {
+  color: var(--text-main);
+}
+
+.watchlist-item-editor label {
+  display: grid;
+  gap: 6px;
+}
+
+.watchlist-item-editor label span,
+.watchlist-editor-error,
+.watchlist-empty-state span {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.watchlist-item-editor input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(8, 11, 17, 0.72);
+  color: var(--text-main);
+  font: inherit;
+}
+
+.watchlist-item-editor input:focus {
+  outline: 1px solid rgba(77, 141, 255, 0.8);
+}
+
+.watchlist-editor-error {
+  margin: 0;
+  color: #ff9c9c;
+}
+
 .watchlist-head {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(88px, 1fr) minmax(72px, 0.9fr);
@@ -235,6 +303,12 @@
   align-items: center;
   padding: 8px 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.watchlist-row:hover {
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .watchlist-row.active {
