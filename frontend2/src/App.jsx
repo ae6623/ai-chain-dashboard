@@ -9,8 +9,15 @@ const minLeftPanelWidth = 260
 const minCenterPanelWidth = 520
 const minRightPanelWidth = 300
 
-const boardTabs = ['持仓', '最近关注etf', 'CPO光', '存储', '铜', 'ETF']
-const watchlist = [
+const fallbackWatchlistGroups = [
+  { id: 'holdings', name: '持仓', itemCount: 0, isDefault: false },
+  { id: 'recent-etf', name: '最近关注 ETF', itemCount: 9, isDefault: true },
+  { id: 'cpo', name: 'CPO光', itemCount: 0, isDefault: false },
+  { id: 'storage', name: '存储', itemCount: 0, isDefault: false },
+  { id: 'copper', name: '铜', itemCount: 0, isDefault: false },
+  { id: 'etf', name: 'ETF', itemCount: 0, isDefault: false },
+]
+const fallbackWatchlistRows = [
   { name: '博通', code: 'AVGO', price: '371.550', change: '+4.69%', trend: 'up' },
   { name: '英伟达', code: 'NVDA', price: '188.630', change: '+2.57%', trend: 'up' },
   { name: '亚马逊', code: 'AMZN', price: '238.380', change: '+2.02%', trend: 'up' },
@@ -33,6 +40,7 @@ const chartDescription = '谷歌-C'
 const chartMarketLabel = '美股'
 const chartExchange = 'LONGBRIDGE'
 const chartUdfBaseUrl = (import.meta.env.VITE_UDF_BASE_URL || 'http://127.0.0.1:5200').replace(/\/$/, '')
+const watchlistApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || chartUdfBaseUrl).replace(/\/$/, '')
 const timeframes = [
   { label: '1分', resolution: '1' },
   { label: '5分', resolution: '5' },
@@ -126,6 +134,10 @@ function formatChatTime(date = new Date()) {
   }).format(date)
 }
 
+function getDefaultWatchlistId(groups) {
+  return groups.find((group) => group.isDefault)?.id ?? groups[0]?.id ?? null
+}
+
 function buildAssistantReply(prompt) {
   const text = prompt.trim().toLowerCase()
 
@@ -178,6 +190,12 @@ function App() {
   const [chatMessages, setChatMessages] = useState(initialChatMessages)
   const [chatDraft, setChatDraft] = useState('')
   const [activeTimeframe, setActiveTimeframe] = useState('日K')
+  const [watchlistState, setWatchlistState] = useState({
+    status: 'loading',
+    groups: fallbackWatchlistGroups,
+    activeId: getDefaultWatchlistId(fallbackWatchlistGroups),
+    error: '',
+  })
 
   const [chartSnapshot, setChartSnapshot] = useState({
     status: 'loading',
@@ -189,6 +207,54 @@ function App() {
   })
 
   const activeResolution = timeframes.find((item) => item.label === activeTimeframe)?.resolution ?? '1D'
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadWatchlists() {
+      try {
+        const response = await fetch(`${watchlistApiBaseUrl}/api/v1/watchlists?includeItemCount=true`)
+
+        if (!response.ok) {
+          throw new Error(`Watchlist request failed: ${response.status}`)
+        }
+
+        const payload = await response.json()
+        if (payload?.code && payload.code !== 0) {
+          throw new Error(payload.message || 'Watchlist request failed.')
+        }
+
+        const groups = Array.isArray(payload?.data) && payload.data.length ? payload.data : fallbackWatchlistGroups
+        if (!cancelled) {
+          setWatchlistState((current) => ({
+            status: 'ready',
+            groups,
+            activeId: groups.some((group) => group.id === current.activeId)
+              ? current.activeId
+              : getDefaultWatchlistId(groups),
+            error: '',
+          }))
+        }
+      } catch (error) {
+        console.error('[App] Failed to load watchlists.', error)
+        if (!cancelled) {
+          setWatchlistState((current) => ({
+            ...current,
+            status: 'error',
+            groups: fallbackWatchlistGroups,
+            activeId: current.activeId ?? getDefaultWatchlistId(fallbackWatchlistGroups),
+            error: '后端分组接口暂不可用，当前显示本地示例列表。',
+          }))
+        }
+      }
+    }
+
+    loadWatchlists()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -376,10 +442,20 @@ function App() {
     setPanelWidths(clampPanelWidths(shell.clientWidth, defaultPanelWidths.left, defaultPanelWidths.right))
   }
 
+  function handleWatchlistSelect(watchlistId) {
+    setWatchlistState((current) => ({ ...current, activeId: watchlistId }))
+  }
+
   const shellStyle = {
     '--left-panel-width': `${panelWidths.left}px`,
     '--right-panel-width': `${panelWidths.right}px`,
   }
+  const watchlistGroups = watchlistState.groups.length ? watchlistState.groups : fallbackWatchlistGroups
+  const activeWatchlistId = watchlistState.activeId ?? getDefaultWatchlistId(watchlistGroups)
+  const activeWatchlist = watchlistGroups.find((group) => group.id === activeWatchlistId) ?? watchlistGroups[0] ?? null
+  const watchlistStatusMessage = watchlistState.status === 'loading'
+    ? '正在同步后端自选分组...'
+    : watchlistState.error
   const chartChangeTone = Number.isFinite(chartSnapshot.changePercent) && chartSnapshot.changePercent < 0 ? 'down' : 'up'
   const chartPrice = formatLastValue(chartSnapshot.latest?.close)
   const chartMa5 = formatLastValue(chartSnapshot.ma5)
@@ -440,12 +516,20 @@ function App() {
           </header>
 
           <div className="board-tabs" aria-label="分组标签">
-            {boardTabs.map((tab, index) => (
-              <button key={tab} type="button" className={`board-tab ${index === 1 ? 'active' : ''}`}>
-                {tab}
+            {watchlistGroups.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                className={`board-tab ${group.id === activeWatchlistId ? 'active' : ''}`}
+                onClick={() => handleWatchlistSelect(group.id)}
+              >
+                <span>{group.name}</span>
+                <span className="board-tab-count">{group.itemCount ?? '--'}</span>
               </button>
             ))}
           </div>
+
+          {watchlistStatusMessage ? <p className="watchlist-status-note">{watchlistStatusMessage}</p> : null}
 
           <div className="watchlist-head">
             <span>名称/代码</span>
@@ -454,7 +538,7 @@ function App() {
           </div>
 
           <div className="watchlist-rows">
-            {watchlist.map((item) => (
+            {fallbackWatchlistRows.map((item) => (
               <article key={item.code} className={`watchlist-row ${item.active ? 'active' : ''}`}>
                 <div className="watchlist-name">
                   <strong>{item.code}</strong>
@@ -464,6 +548,10 @@ function App() {
                 <div className={`watchlist-change ${item.trend}`}>{item.change}</div>
               </article>
             ))}
+
+            <div className="watchlist-footnote">
+              当前分组：{activeWatchlist?.name ?? '--'} · 项数 {activeWatchlist?.itemCount ?? '--'}
+            </div>
           </div>
         </aside>
 
@@ -507,12 +595,6 @@ function App() {
 
           <div className="chart-stage">
             <div className="chart-surface">
-              <div className="ma-strip">
-                <span>MA5: {chartMa5}</span>
-                <span>MA8: {chartMa8}</span>
-                <span>MA13: {chartMa13}</span>
-              </div>
-
               <TradingChart symbol={chartSymbol} description={chartDescription} interval={activeResolution} baseUrl={chartUdfBaseUrl} />
             </div>
           </div>

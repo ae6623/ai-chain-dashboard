@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from providers.base import HistoryDataProvider
 from const import Provider
@@ -43,6 +43,13 @@ class LongBridgeHistoryProvider(HistoryDataProvider):
         supported_suffixes = ['.HK', '.US', '.SS', '.SZ', '.SH']
         return any(symbol.endswith(suffix) for suffix in supported_suffixes)
 
+    def _normalize_bar_timestamp(self, bar_time: int, resolution: str) -> int:
+        if resolution not in {'1D', '1W', '1M'}:
+            return bar_time
+
+        dt = datetime.fromtimestamp(bar_time, tz=timezone.utc)
+        return int(dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+
     def get_history_data(self, symbol: str, resolution: str,
                          from_time: int, to_time: int,
                          countback: int = 0, **kwargs) -> Optional[Dict[str, Any]]:
@@ -56,10 +63,16 @@ class LongBridgeHistoryProvider(HistoryDataProvider):
                 return {"s": "error", "errmsg": f"Unsupported resolution: {resolution}"}
             if not self.supports_symbol(symbol):
                 return {"s": "error", "errmsg": f"Unsupported symbol: {symbol}"}
+            requested_range_count = 0
+            if from_time:
+                requested_range_count = self._calculate_data_count(resolution, from_time, to_time)
+
             if countback:
-                count = countback
-            elif from_time:
-                count = self._calculate_data_count(resolution, from_time, to_time)
+                # Fetch enough bars for the requested window plus any older backfill
+                # TradingView asks for via countBack.
+                count = max(countback, requested_range_count)
+            elif requested_range_count:
+                count = requested_range_count
             else:
                 count = 1000
             kline_list = self.ctx.history_candlesticks_by_offset(
@@ -67,24 +80,25 @@ class LongBridgeHistoryProvider(HistoryDataProvider):
                 period=longbridge_period,
                 adjust_type=AdjustType.ForwardAdjust,
                 forward=False,
-                time=datetime.fromtimestamp(to_time),
+                time=datetime.fromtimestamp(to_time, tz=timezone.utc),
                 count=count
             )
             if not kline_list:
                 return {"t":[],"o":[],"h":[],"l":[],"c":[],"v":[],"s":"no_data"}
-            return self._convert_to_udf_format(kline_list, from_time, to_time)
+            return self._convert_to_udf_format(kline_list, from_time, to_time, resolution)
         except Exception as e:
             logger.exception(e)
             return {"s": "error", "errmsg": f"LongBridge error: {str(e)}"}
 
     def _convert_to_udf_format(self, kline_list: List[Dict],
-                                from_time: int, to_time: int) -> Dict[str, Any]:
+                                from_time: int, to_time: int,
+                                resolution: str) -> Dict[str, Any]:
         times, opens, highs, lows, closes, volumes = [], [], [], [], [], []
         for bar in kline_list:
             bar_time = int(bar.timestamp.timestamp())
-            if bar_time < from_time or bar_time > to_time:
+            if bar_time > to_time:
                 continue
-            times.append(bar_time)
+            times.append(self._normalize_bar_timestamp(bar_time, resolution))
             opens.append(float(bar.open))
             highs.append(float(bar.high))
             lows.append(float(bar.low))

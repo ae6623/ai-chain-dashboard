@@ -112,6 +112,28 @@ class Symbol(db.Model):
             query_obj = query_obj.filter_by(is_visible=is_visible)
         return query_obj.order_by(cls.id.desc()).limit(limit).all()
 
+    def _market_timezone(self):
+        from const import SymbolType
+
+        if self.type == SymbolType.STOCKS_US.value:
+            return 'America/New_York'
+        if self.type == SymbolType.STOCKS_HK.value:
+            return 'Asia/Hong_Kong'
+        if self.type == SymbolType.STOCKS_CN.value:
+            return 'Asia/Shanghai'
+        return 'Etc/UTC'
+
+    def _market_session(self):
+        from const import SymbolType
+
+        if self.type == SymbolType.STOCKS_US.value:
+            return '0930-1600'
+        if self.type == SymbolType.STOCKS_HK.value:
+            return '0930-1200,1300-1600'
+        if self.type == SymbolType.STOCKS_CN.value:
+            return '0930-1130,1300-1500'
+        return '24x7'
+
     def to_dict_extended(self):
         """返回 TradingView UDF 标准格式"""
         from const import SymbolType, Provider
@@ -120,7 +142,7 @@ class Symbol(db.Model):
             'name': self.symbol,
             'exchange-traded': self.exchange,
             'exchange-listed': self.exchange,
-            'timezone': 'Etc/UTC',
+            'timezone': self._market_timezone(),
             'minmov': 1,
             'minmov2': 0,
             'pointvalue': 1,
@@ -131,7 +153,7 @@ class Symbol(db.Model):
             'ticker': self.ticker,
             'type': self.type,
             'currency_code': '',
-            'session': '24x7' if self.type == 'crypto' else '0930-1600',
+            'session': self._market_session(),
             'pricescale': 100000 if self.type == 'crypto' else 100,
             'has_intraday': True,
             'has_daily': True,

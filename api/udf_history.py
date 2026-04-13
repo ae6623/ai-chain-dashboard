@@ -64,13 +64,14 @@ class UDFHistoryManager:
     def get_history_data(self,
                          symbol: str = None,
                          resolution: str = None,
+                         from_time: int = None,
                          to_time: int = None,
                          countback: int = 0,
                          preferred_provider: str = None,
                          **kwargs) -> Dict[str, Any]:
         logger.info(
-            "[get_history_data]symbol: %s, resolution: %s, to_time: %s, countback: %s, provider: %s",
-            symbol, resolution, to_time, countback, preferred_provider
+            "[get_history_data]symbol: %s, resolution: %s, from_time: %s, to_time: %s, countback: %s, provider: %s",
+            symbol, resolution, from_time, to_time, countback, preferred_provider
         )
         preferred = next((p for p in self.providers if p.get_name() == preferred_provider), None) if preferred_provider else None
         providers = ([preferred] if preferred else []) + [p for p in self.providers if p != preferred]
@@ -79,7 +80,7 @@ class UDFHistoryManager:
             if not (provider.is_available() and provider.supports_symbol(symbol)):
                 continue
             try:
-                result = provider.get_history_data(symbol, resolution, None, to_time, countback, **kwargs)
+                result = provider.get_history_data(symbol, resolution, from_time, to_time, countback, **kwargs)
                 if result and result.get('s') in ('ok', 'no_data'):
                     return result
                 logger.info("[provider_failed]name: %s, result: %s", provider.get_name(), result)

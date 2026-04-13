@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import db, Symbol, Watchlist
 from form import F_str, F_int, form_validator, FormError
 from const import SymbolType, Provider
+from symbol_registry import sync_longbridge_symbol
 
 # ---------- logging ----------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -216,6 +217,59 @@ def align_timestamp_to_resolution(timestamp, resolution):
     return int(aligned_dt.timestamp())
 
 
+def normalize_udf_history_window(result, from_time, to_time, countback):
+    timestamps = result.get('t') or []
+    if not timestamps:
+        return result
+
+    opens = result.get('o') or []
+    highs = result.get('h') or []
+    lows = result.get('l') or []
+    closes = result.get('c') or []
+    volumes = result.get('v') or []
+    bars = []
+
+    for index, ts in enumerate(timestamps):
+        if ts > to_time:
+            continue
+        bars.append({
+            't': ts,
+            'o': opens[index] if index < len(opens) else None,
+            'h': highs[index] if index < len(highs) else None,
+            'l': lows[index] if index < len(lows) else None,
+            'c': closes[index] if index < len(closes) else None,
+            'v': volumes[index] if index < len(volumes) else None,
+        })
+
+    if not bars:
+        return {"s": "no_data", "nextTime": to_time}
+
+    selected = bars
+    if from_time:
+        in_range = [bar for bar in bars if bar['t'] >= from_time]
+        if countback and len(in_range) < countback:
+            older = [bar for bar in bars if bar['t'] < from_time]
+            selected = older[-(countback - len(in_range)):] + in_range
+        else:
+            selected = in_range
+    elif countback:
+        selected = bars[-countback:]
+
+    if not selected:
+        next_time = max((bar['t'] for bar in bars if bar['t'] < from_time), default=to_time)
+        return {"s": "no_data", "nextTime": next_time}
+
+    return {
+        "s": "ok",
+        "t": [bar['t'] for bar in selected],
+        "o": [bar['o'] for bar in selected],
+        "h": [bar['h'] for bar in selected],
+        "l": [bar['l'] for bar in selected],
+        "c": [bar['c'] for bar in selected],
+        "v": [bar['v'] for bar in selected],
+    }
+
+
 # ---------- Error handlers ----------
 @app.errorhandler(FormError)
 def handle_form_error(e):
@@ -375,17 +429,23 @@ def get_dynamic_udf_config():
 
 def validate_symbol(symbol):
     try:
-        if ":" in symbol:
-            exchange, symbol_name = symbol.split(":", 1)
+        normalized_symbol = symbol.upper()
+        lookup_symbol = normalized_symbol
+
+        if ":" in normalized_symbol:
+            exchange, symbol_name = normalized_symbol.split(":", 1)
             symbol_obj = Symbol.query.filter_by(
                 exchange=exchange.upper(), symbol=symbol_name.upper()
             ).first()
             if symbol_obj:
                 return symbol_obj
-            symbol_obj = Symbol.get_by_symbol(symbol.upper())
-        else:
-            symbol_obj = Symbol.get_by_symbol(symbol.upper())
-        return symbol_obj
+            lookup_symbol = symbol_name.upper()
+
+        symbol_obj = Symbol.get_by_symbol(lookup_symbol)
+        if symbol_obj:
+            return symbol_obj
+
+        return sync_longbridge_symbol(lookup_symbol)
     except Exception:
         return None
 
@@ -483,17 +543,20 @@ def stats():
     ('resolution', F_str('resolution') & 'strict' & 'optional'),
     ('from', F_int('from') & 'strict' & 'optional'),
     ('to', F_int('to') & 'strict' & 'optional'),
-    ('countback', F_int('countback') & 'strict' & 'required'),
+    ('countback', F_int('countback') & 'strict' & 'optional'),
     ('provider', F_str('provider', choices=Provider) & 'strict' & 'optional'),
 ])
 def history(vars):
     if not vars['to']:
         vars['to'] = int(time.time())
+    if not vars['countback']:
+        vars['countback'] = 0 if vars['from'] else 300
     if vars['countback'] >= 1000:
         vars['countback'] = 1000
     if not vars['resolution']:
         vars['resolution'] = "15"
 
+    from_time = vars['from']
     to_time = align_timestamp_to_resolution(vars['to'], vars['resolution'])
 
     try:
@@ -507,21 +570,15 @@ def history(vars):
         result = mgr.get_history_data(
             symbol=symbol_obj.ticker,
             resolution=vars['resolution'],
+            from_time=from_time,
             to_time=to_time,
             countback=vars['countback'],
             preferred_provider=preferred_provider,
         )
 
         if result.get('s') == 'ok' and result.get('t'):
-            timestamps = result['t']
-            valid_indices = [i for i, ts in enumerate(timestamps) if ts <= vars['to']]
-            if valid_indices:
-                result['t'] = [timestamps[i] for i in valid_indices]
-                for k in ['o', 'h', 'l', 'c', 'v']:
-                    if result.get(k):
-                        result[k] = [result[k][i] for i in valid_indices]
-            else:
-                result = {"s": "no_data", "nextTime": vars['to']}
+            effective_to = to_time if vars['resolution'] in {'1D', '1W', '1M'} else vars['to']
+            result = normalize_udf_history_window(result, from_time, effective_to, vars['countback'])
 
         return jsonify(result)
 

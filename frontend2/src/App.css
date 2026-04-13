@@ -156,6 +156,9 @@
 }
 
 .board-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   flex: 0 0 auto;
   padding: 8px 12px;
   border-radius: 10px;
@@ -164,9 +167,34 @@
   font-size: 12px;
 }
 
+.board-tab-count {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-size: 11px;
+}
+
 .board-tab.active {
   background: rgba(49, 110, 255, 0.16);
   color: var(--accent-blue);
+}
+
+.board-tab.active .board-tab-count {
+  background: rgba(49, 110, 255, 0.2);
+}
+
+.watchlist-status-note,
+.watchlist-footnote {
+  margin: 0;
+  padding: 0 16px 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.watchlist-footnote {
+  padding-top: 12px;
 }
 
 .watchlist-head {
@@ -327,31 +355,10 @@
 .chart-surface {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  gap: 6px;
-  padding: 12px 12px 0;
-}
-
-.ma-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 18px;
-  padding: 0 0 8px 8px;
-  font-size: 12px;
-}
-
-.ma-strip span:nth-child(1) {
-  color: #7fd1ff;
-}
-
-.ma-strip span:nth-child(2) {
-  color: #ffc857;
-}
-
-.ma-strip span:nth-child(3) {
-  color: #b983ff;
+  padding: 12px;
 }
 
 .price-chart {

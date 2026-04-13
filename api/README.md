@@ -13,6 +13,9 @@ cp .env.example .env
 
 # 启动开发服务器
 python app.py
+
+# 可选：批量导入一组 Longbridge 标的
+python scripts/import_longbridge_symbols.py GOOG.US AAPL.US
 ```
 
 ## 接口列表
