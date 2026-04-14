@@ -17,7 +17,7 @@ def to_iso8601(dt):
 class Watchlist(db.Model):
     __tablename__ = 'watchlist'
 
-    id = db.Column(db.String(64), primary_key=True)
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = db.Column(
         db.DateTime(timezone=True),
@@ -67,8 +67,8 @@ class Watchlist(db.Model):
 class WatchlistItem(db.Model):
     __tablename__ = 'watchlist_item'
 
-    id = db.Column(db.String(64), primary_key=True)
-    watchlist_id = db.Column(db.String(64), db.ForeignKey('watchlist.id', ondelete='CASCADE'), nullable=False)
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    watchlist_id = db.Column(db.Integer, db.ForeignKey('watchlist.id', ondelete='CASCADE'), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = db.Column(
         db.DateTime(timezone=True),

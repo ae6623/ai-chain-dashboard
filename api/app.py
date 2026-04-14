@@ -13,6 +13,7 @@ from logging.handlers import RotatingFileHandler
 from uuid import uuid4
 from flask import Flask, Blueprint, jsonify, request, g
 from flask_cors import CORS
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 # 确保当前目录在 sys.path 中
@@ -64,12 +65,140 @@ def configure_logging():
 
 logger = configure_logging()
 
+LEGACY_WATCHLIST_INDEXES = (
+    'idx_watchlist_sort',
+    'idx_watchlist_default',
+)
+LEGACY_WATCHLIST_ITEM_INDEXES = (
+    'idx_watchlist_item_watchlist_sort',
+    'idx_watchlist_item_symbol',
+)
+
+
+def column_uses_integer_type(column_info):
+    return 'INT' in str(column_info.get('type', '')).upper()
+
+
+def watchlist_schema_needs_id_migration():
+    inspector = inspect(db.engine)
+    if not inspector.has_table('watchlist'):
+        return False
+
+    watchlist_columns = {column['name']: column for column in inspector.get_columns('watchlist')}
+    if not column_uses_integer_type(watchlist_columns.get('id', {})):
+        return True
+
+    if not inspector.has_table('watchlist_item'):
+        return False
+
+    item_columns = {column['name']: column for column in inspector.get_columns('watchlist_item')}
+    return not column_uses_integer_type(item_columns.get('id', {})) or not column_uses_integer_type(
+        item_columns.get('watchlist_id', {})
+    )
+
+
+def migrate_watchlist_ids_to_integer():
+    inspector = inspect(db.engine)
+    if not inspector.has_table('watchlist') or not watchlist_schema_needs_id_migration():
+        return
+
+    if db.engine.dialect.name != 'sqlite':
+        raise RuntimeError('watchlist id migration requires sqlite or a manual migration for this database backend')
+
+    watchlist_item_exists = inspector.has_table('watchlist_item')
+    logger.info('Migrating watchlist and watchlist item ids to integer primary keys')
+
+    with db.engine.begin() as connection:
+        connection.exec_driver_sql('PRAGMA foreign_keys=OFF')
+        if watchlist_item_exists:
+            connection.exec_driver_sql('ALTER TABLE watchlist_item RENAME TO watchlist_item_legacy')
+        connection.exec_driver_sql('ALTER TABLE watchlist RENAME TO watchlist_legacy')
+
+        for index_name in LEGACY_WATCHLIST_INDEXES:
+            connection.exec_driver_sql(f'DROP INDEX IF EXISTS {index_name}')
+        if watchlist_item_exists:
+            for index_name in LEGACY_WATCHLIST_ITEM_INDEXES:
+                connection.exec_driver_sql(f'DROP INDEX IF EXISTS {index_name}')
+
+    db.metadata.create_all(bind=db.engine, tables=[Watchlist.__table__, WatchlistItem.__table__])
+
+    watchlist_count = 0
+    item_count = 0
+    with db.engine.begin() as connection:
+        watchlist_id_map = {}
+        legacy_watchlists = connection.exec_driver_sql(
+            'SELECT id, name, sort, is_default, item_count, created_at, updated_at '
+            'FROM watchlist_legacy ORDER BY sort ASC, created_at ASC'
+        ).mappings().all()
+        for row in legacy_watchlists:
+            result = connection.execute(
+                text(
+                    'INSERT INTO watchlist (name, sort, is_default, item_count, created_at, updated_at) '
+                    'VALUES (:name, :sort, :is_default, :item_count, :created_at, :updated_at)'
+                ),
+                {
+                    'name': row['name'],
+                    'sort': row['sort'],
+                    'is_default': row['is_default'],
+                    'item_count': row['item_count'],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at'],
+                },
+            )
+            watchlist_id_map[str(row['id'])] = int(result.lastrowid)
+            watchlist_count += 1
+
+        if watchlist_item_exists:
+            legacy_items = connection.exec_driver_sql(
+                'SELECT id, watchlist_id, symbol, display_name, sort, created_at, updated_at '
+                'FROM watchlist_item_legacy ORDER BY sort ASC, created_at ASC'
+            ).mappings().all()
+            for row in legacy_items:
+                next_watchlist_id = watchlist_id_map.get(str(row['watchlist_id']))
+                if next_watchlist_id is None:
+                    continue
+
+                connection.execute(
+                    text(
+                        'INSERT INTO watchlist_item '
+                        '(watchlist_id, symbol, display_name, sort, created_at, updated_at) '
+                        'VALUES (:watchlist_id, :symbol, :display_name, :sort, :created_at, :updated_at)'
+                    ),
+                    {
+                        'watchlist_id': next_watchlist_id,
+                        'symbol': row['symbol'],
+                        'display_name': row['display_name'],
+                        'sort': row['sort'],
+                        'created_at': row['created_at'],
+                        'updated_at': row['updated_at'],
+                    },
+                )
+                item_count += 1
+
+        connection.execute(
+            text(
+                'UPDATE watchlist '
+                'SET item_count = ('
+                'SELECT COUNT(*) FROM watchlist_item WHERE watchlist_item.watchlist_id = watchlist.id'
+                ')'
+            )
+        )
+
+        if watchlist_item_exists:
+            connection.exec_driver_sql('DROP TABLE watchlist_item_legacy')
+        connection.exec_driver_sql('DROP TABLE watchlist_legacy')
+        connection.exec_driver_sql('PRAGMA foreign_keys=ON')
+
+    logger.info('Watchlist id migration finished: watchlists=%s items=%s', watchlist_count, item_count)
+
+
 # ---------- Flask app ----------
 app = Flask(__name__)
 app.config.from_object('config.Config')
 CORS(app)
 db.init_app(app)
 with app.app_context():
+    migrate_watchlist_ids_to_integer()
     db.create_all()
 
 
@@ -382,7 +511,7 @@ def list_watchlists():
     return api_v1_success([watchlist.to_api_dict(include_item_count=include_item_count) for watchlist in watchlists])
 
 
-@api_v1_bp.route('/watchlists/<string:watchlist_id>', methods=['GET'])
+@api_v1_bp.route('/watchlists/<int:watchlist_id>', methods=['GET'])
 def get_watchlist(watchlist_id):
     watchlist = Watchlist.query.get(watchlist_id)
     if not watchlist:
@@ -398,7 +527,6 @@ def create_watchlist():
         return api_v1_error(400100, str(exc))
 
     watchlist = Watchlist(
-        id=f"wl_{uuid4().hex[:12]}",
         name=payload['name'],
         sort=payload.get('sort', Watchlist.get_next_sort()),
         is_default=payload.get('isDefault', False),
@@ -419,7 +547,7 @@ def create_watchlist():
     return api_v1_success(watchlist.to_api_dict())
 
 
-@api_v1_bp.route('/watchlists/<string:watchlist_id>', methods=['PATCH'])
+@api_v1_bp.route('/watchlists/<int:watchlist_id>', methods=['PATCH'])
 def update_watchlist(watchlist_id):
     watchlist = Watchlist.query.get(watchlist_id)
     if not watchlist:
@@ -451,7 +579,7 @@ def update_watchlist(watchlist_id):
     return api_v1_success(watchlist.to_api_dict())
 
 
-@api_v1_bp.route('/watchlists/<string:watchlist_id>', methods=['DELETE'])
+@api_v1_bp.route('/watchlists/<int:watchlist_id>', methods=['DELETE'])
 def delete_watchlist(watchlist_id):
     watchlist = Watchlist.query.get(watchlist_id)
     if not watchlist:
@@ -469,7 +597,7 @@ def delete_watchlist(watchlist_id):
     return api_v1_success(True)
 
 
-@api_v1_bp.route('/watchlists/<string:watchlist_id>/items', methods=['GET'])
+@api_v1_bp.route('/watchlists/<int:watchlist_id>/items', methods=['GET'])
 def list_watchlist_items(watchlist_id):
     watchlist, error_response = get_watchlist_or_error(watchlist_id)
     if error_response is not None:
@@ -481,7 +609,7 @@ def list_watchlist_items(watchlist_id):
     return api_v1_success([item.to_api_dict() for item in items])
 
 
-@api_v1_bp.route('/watchlists/<string:watchlist_id>/items', methods=['POST'])
+@api_v1_bp.route('/watchlists/<int:watchlist_id>/items', methods=['POST'])
 def create_watchlist_item(watchlist_id):
     watchlist, error_response = get_watchlist_or_error(watchlist_id)
     if error_response is not None:
@@ -495,7 +623,6 @@ def create_watchlist_item(watchlist_id):
     symbol_obj = resolve_watchlist_item_symbol(payload['symbol'])
     resolved_symbol = symbol_obj.symbol if symbol_obj is not None else payload['symbol']
     item = WatchlistItem(
-        id=f"wli_{uuid4().hex[:12]}",
         watchlist_id=watchlist.id,
         symbol=resolved_symbol,
         display_name=payload.get('displayName'),
@@ -514,7 +641,7 @@ def create_watchlist_item(watchlist_id):
     return api_v1_success(item.to_api_dict(symbol_obj=symbol_obj))
 
 
-@api_v1_bp.route('/watchlists/<string:watchlist_id>/items/<string:item_id>', methods=['PATCH'])
+@api_v1_bp.route('/watchlists/<int:watchlist_id>/items/<int:item_id>', methods=['PATCH'])
 def update_watchlist_item(watchlist_id, item_id):
     watchlist, error_response = get_watchlist_or_error(watchlist_id)
     if error_response is not None:
@@ -549,7 +676,7 @@ def update_watchlist_item(watchlist_id, item_id):
     return api_v1_success(item.to_api_dict(symbol_obj=symbol_obj))
 
 
-@api_v1_bp.route('/watchlists/<string:watchlist_id>/items/<string:item_id>', methods=['DELETE'])
+@api_v1_bp.route('/watchlists/<int:watchlist_id>/items/<int:item_id>', methods=['DELETE'])
 def delete_watchlist_item(watchlist_id, item_id):
     watchlist, error_response = get_watchlist_or_error(watchlist_id)
     if error_response is not None:

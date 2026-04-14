@@ -9,26 +9,6 @@ const minLeftPanelWidth = 260
 const minCenterPanelWidth = 520
 const minRightPanelWidth = 300
 
-const fallbackWatchlistGroups = [
-  { id: 'holdings', name: '持仓', itemCount: 0, isDefault: false },
-  { id: 'recent-etf', name: '最近关注 ETF', itemCount: 9, isDefault: true },
-  { id: 'cpo', name: 'CPO光', itemCount: 0, isDefault: false },
-  { id: 'storage', name: '存储', itemCount: 0, isDefault: false },
-  { id: 'copper', name: '铜', itemCount: 0, isDefault: false },
-  { id: 'etf', name: 'ETF', itemCount: 0, isDefault: false },
-]
-
-const fallbackWatchlistRows = [
-  { name: '博通', code: 'AVGO', symbol: 'AVGO.US', price: '371.550', change: '+4.69%', trend: 'up' },
-  { name: '英伟达', code: 'NVDA', symbol: 'NVDA.US', price: '188.630', change: '+2.57%', trend: 'up' },
-  { name: '亚马逊', code: 'AMZN', symbol: 'AMZN.US', price: '238.380', change: '+2.02%', trend: 'up' },
-  { name: '台积电', code: 'TSM', symbol: 'TSM.US', price: '370.600', change: '+1.40%', trend: 'up' },
-  { name: '特斯拉', code: 'TSLA', symbol: 'TSLA.US', price: '348.950', change: '+0.96%', trend: 'up' },
-  { name: 'Meta', code: 'META', symbol: 'META.US', price: '629.860', change: '+0.23%', trend: 'up' },
-  { name: '苹果', code: 'AAPL', symbol: 'AAPL.US', price: '260.480', change: '-0.01%', trend: 'down' },
-  { name: '谷歌-C', code: 'GOOG', symbol: 'GOOG.US', price: '315.720', change: '-0.21%', trend: 'down', active: true },
-  { name: '微软', code: 'MSFT', symbol: 'MSFT.US', price: '370.870', change: '-0.59%', trend: 'down' },
-]
 
 const footerIndexes = [
   { name: '道琼斯', value: '47916.570', change: '-0.56%', trend: 'down' },
@@ -68,7 +48,7 @@ const initialChatMessages = [
     id: 'm2',
     role: 'assistant',
     title: '即时观察',
-    content: '中间图表和右侧上下文会跟随当前选中的自选股切换。如果你想看支撑、压力、趋势或回撤节奏，可以直接问我。',
+    content: '中间图表和右侧上下文会跟随你点击的自选股切换。如果你想看支撑、压力、趋势或回撤节奏，可以直接问我。',
     time: '14:06',
   },
 ]
@@ -139,6 +119,30 @@ function formatChatTime(date = new Date()) {
 
 function getDefaultWatchlistId(groups) {
   return groups.find((group) => group.isDefault)?.id ?? groups[0]?.id ?? null
+}
+
+function createWatchlistModalState(groupCount = 0, overrides = {}) {
+  return {
+    open: false,
+    name: '',
+    isDefault: groupCount === 0,
+    saving: false,
+    error: '',
+    ...overrides,
+  }
+}
+
+function createItemEditorState(overrides = {}) {
+  return {
+    open: false,
+    mode: 'create',
+    itemId: null,
+    symbol: '',
+    displayName: '',
+    saving: false,
+    error: '',
+    ...overrides,
+  }
 }
 
 function buildAssistantReply(prompt, symbol) {
@@ -236,24 +240,6 @@ async function fetchHistoryPayload(symbol, resolution = '1D', countback = 20) {
   return payload
 }
 
-function mapFallbackWatchlistItem(item, index) {
-  return {
-    id: `fallback-${item.symbol || item.code}-${index}`,
-    symbol: item.symbol || item.code,
-    ticker: item.code || item.symbol,
-    name: item.name,
-    description: item.name,
-    displayName: item.name,
-    exchange: defaultChartExchange,
-    type: 'stocks_us',
-    price: item.price,
-    change: item.change,
-    trend: item.trend,
-    isFallback: true,
-    active: Boolean(item.active),
-  }
-}
-
 function getItemName(item) {
   return item?.displayName || item?.description || item?.name || item?.fullName || item?.symbol || '--'
 }
@@ -311,6 +297,7 @@ function App() {
   const shellRef = useRef(null)
   const dragStateRef = useRef(null)
   const chatViewportRef = useRef(null)
+  const watchlistContextMenuRef = useRef(null)
   const nextMessageIdRef = useRef(initialChatMessages.length + 1)
 
   const [panelWidths, setPanelWidths] = useState(defaultPanelWidths)
@@ -319,8 +306,8 @@ function App() {
   const [activeTimeframe, setActiveTimeframe] = useState('日K')
   const [watchlistState, setWatchlistState] = useState({
     status: 'loading',
-    groups: fallbackWatchlistGroups,
-    activeId: getDefaultWatchlistId(fallbackWatchlistGroups),
+    groups: [],
+    activeId: null,
     error: '',
   })
   const [watchlistItemsState, setWatchlistItemsState] = useState({
@@ -329,6 +316,8 @@ function App() {
     selectedByWatchlistId: {},
     error: '',
   })
+  const [chartSelection, setChartSelection] = useState(null)
+  const [watchlistContextMenu, setWatchlistContextMenu] = useState(null)
   const [quoteSnapshots, setQuoteSnapshots] = useState({})
   const [chartSnapshot, setChartSnapshot] = useState({
     status: 'loading',
@@ -338,49 +327,37 @@ function App() {
     ma13: null,
     changePercent: null,
   })
-  const [isWatchlistEditing, setIsWatchlistEditing] = useState(false)
-  const [itemEditorState, setItemEditorState] = useState({
-    mode: 'create',
-    itemId: null,
-    symbol: '',
-    displayName: '',
-    saving: false,
-    error: '',
-  })
+  const [itemEditorState, setItemEditorState] = useState(() => createItemEditorState())
+  const [watchlistModalState, setWatchlistModalState] = useState(() => createWatchlistModalState())
 
   const activeResolution = timeframes.find((item) => item.label === activeTimeframe)?.resolution ?? '1D'
-  const watchlistGroups = watchlistState.groups.length ? watchlistState.groups : fallbackWatchlistGroups
+  const watchlistGroups = watchlistState.groups
   const activeWatchlistId = watchlistState.activeId ?? getDefaultWatchlistId(watchlistGroups)
   const activeWatchlist = watchlistGroups.find((group) => group.id === activeWatchlistId) ?? watchlistGroups[0] ?? null
-  const fallbackItems = fallbackWatchlistRows.map(mapFallbackWatchlistItem)
-  const activeApiItems = activeWatchlistId ? watchlistItemsState.byWatchlistId[activeWatchlistId] ?? [] : []
-  const useFallbackItems = watchlistState.status === 'error' || watchlistItemsState.status === 'error'
-  const visibleWatchlistItems = useFallbackItems ? fallbackItems : activeApiItems
-  const fallbackActiveId = fallbackItems.find((item) => item.active)?.id
-    ?? fallbackItems.find((item) => item.symbol === defaultChartSymbol)?.id
-    ?? fallbackItems[0]?.id
-    ?? null
-  const currentSelection = activeWatchlistId ? watchlistItemsState.selectedByWatchlistId[activeWatchlistId] : null
-  const activeWatchlistItem = visibleWatchlistItems.find((item) => item.id === currentSelection)
-    ?? visibleWatchlistItems.find((item) => item.active)
-    ?? fallbackItems.find((item) => item.id === fallbackActiveId)
-    ?? visibleWatchlistItems[0]
-    ?? null
-  const activeSymbol = activeWatchlistItem?.symbol || defaultChartSymbol
-  const activeDescription = getItemName(activeWatchlistItem) || defaultChartDescription
-  const activeShortSymbol = getShortSymbol(activeWatchlistItem)
-  const activeExchange = activeWatchlistItem?.exchange || defaultChartExchange
-  const activeMarketLabel = inferMarketLabel(activeWatchlistItem)
-  const watchlistStatusMessage = watchlistState.status === 'loading'
-    ? '正在同步后端自选分组...'
-    : watchlistState.error || (watchlistItemsState.status === 'loading' ? '正在同步当前分组标的...' : watchlistItemsState.error)
+  const resolvedActiveWatchlistId = activeWatchlist?.id ?? activeWatchlistId ?? null
+  const activeApiItems = resolvedActiveWatchlistId ? watchlistItemsState.byWatchlistId[resolvedActiveWatchlistId] ?? [] : []
+  const visibleWatchlistItems = activeApiItems
+  const currentSelection = resolvedActiveWatchlistId ? watchlistItemsState.selectedByWatchlistId[resolvedActiveWatchlistId] : null
+  const activeWatchlistItem = visibleWatchlistItems.find((item) => item.id === currentSelection) ?? null
+  const chartWatchlistItems = chartSelection?.watchlistId
+    ? watchlistItemsState.byWatchlistId[chartSelection.watchlistId] ?? []
+    : []
+  const chartWatchlistItem = chartSelection
+    ? chartWatchlistItems.find((item) => item.id === chartSelection.itemId) ?? null
+    : activeWatchlistItem ?? visibleWatchlistItems[0] ?? null
+  const highlightedWatchlistItemId = chartSelection?.watchlistId === resolvedActiveWatchlistId
+    ? chartSelection.itemId
+    : null
+  const activeSymbol = chartWatchlistItem?.symbol || defaultChartSymbol
+  const activeDescription = getItemName(chartWatchlistItem) || defaultChartDescription
+  const activeShortSymbol = getShortSymbol(chartWatchlistItem)
+  const activeExchange = chartWatchlistItem?.exchange || defaultChartExchange
+  const activeMarketLabel = inferMarketLabel(chartWatchlistItem)
   const chartChangeTone = getTrendClass(chartSnapshot.changePercent)
   const chartPrice = formatLastValue(chartSnapshot.latest?.close)
   const chartMa5 = formatLastValue(chartSnapshot.ma5)
-  const chartMa8 = formatLastValue(chartSnapshot.ma8)
-  const chartMa13 = formatLastValue(chartSnapshot.ma13)
-  const chartVolume = formatVolume(chartSnapshot.latest?.volume)
   const chartResistance = formatLastValue(chartSnapshot.latest?.high)
+  const visibleWatchlistSymbols = visibleWatchlistItems.map((item) => item.symbol).filter(Boolean)
   const shellStyle = {
     '--left-panel-width': `${panelWidths.left}px`,
     '--right-panel-width': `${panelWidths.right}px`,
@@ -389,7 +366,7 @@ function App() {
   async function loadWatchlists(preferredActiveId = null) {
     try {
       const groups = await requestApiData(`${watchlistApiBaseUrl}/api/v1/watchlists?includeItemCount=true`)
-      const nextGroups = Array.isArray(groups) && groups.length ? groups : fallbackWatchlistGroups
+      const nextGroups = Array.isArray(groups) ? groups : []
 
       setWatchlistState((current) => ({
         status: 'ready',
@@ -403,13 +380,12 @@ function App() {
       }))
     } catch (error) {
       console.error('[App] Failed to load watchlists.', error)
-      setWatchlistState((current) => ({
-        ...current,
+      setWatchlistState({
         status: 'error',
-        groups: fallbackWatchlistGroups,
-        activeId: current.activeId ?? getDefaultWatchlistId(fallbackWatchlistGroups),
-        error: '后端分组接口暂不可用，当前显示本地示例列表。',
-      }))
+        groups: [],
+        activeId: null,
+        error: '后端分组接口暂不可用。',
+      })
     }
   }
 
@@ -446,7 +422,15 @@ function App() {
       setWatchlistItemsState((current) => ({
         ...current,
         status: 'error',
-        error: '自选项接口暂不可用，当前显示示例股票。',
+        byWatchlistId: {
+          ...current.byWatchlistId,
+          [watchlistId]: [],
+        },
+        selectedByWatchlistId: {
+          ...current.selectedByWatchlistId,
+          [watchlistId]: null,
+        },
+        error: '自选项接口暂不可用。',
       }))
     }
   }
@@ -463,7 +447,7 @@ function App() {
           return
         }
 
-        const nextGroups = Array.isArray(groups) && groups.length ? groups : fallbackWatchlistGroups
+        const nextGroups = Array.isArray(groups) ? groups : []
         setWatchlistState((current) => ({
           status: 'ready',
           groups: nextGroups,
@@ -475,13 +459,12 @@ function App() {
       } catch (error) {
         console.error('[App] Failed to load watchlists.', error)
         if (!cancelled) {
-          setWatchlistState((current) => ({
-            ...current,
+          setWatchlistState({
             status: 'error',
-            groups: fallbackWatchlistGroups,
-            activeId: current.activeId ?? getDefaultWatchlistId(fallbackWatchlistGroups),
-            error: '后端分组接口暂不可用，当前显示本地示例列表。',
-          }))
+            groups: [],
+            activeId: null,
+            error: '后端分组接口暂不可用。',
+          })
         }
       }
     }
@@ -497,21 +480,26 @@ function App() {
     let cancelled = false
 
     async function bootstrapWatchlistItems() {
-      if (!activeWatchlistId || watchlistState.status === 'error') {
+      if (!resolvedActiveWatchlistId) {
+        setWatchlistItemsState((current) => ({ ...current, status: 'idle', error: '' }))
+        return
+      }
+
+      if (watchlistState.status === 'error') {
         return
       }
 
       setWatchlistItemsState((current) => ({ ...current, status: 'loading', error: '' }))
 
       try {
-        const items = await requestApiData(`${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(activeWatchlistId)}/items`)
+        const items = await requestApiData(`${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(resolvedActiveWatchlistId)}/items`)
         if (cancelled) {
           return
         }
 
         const nextItems = Array.isArray(items) ? items : []
         setWatchlistItemsState((current) => {
-          const selectionCandidate = current.selectedByWatchlistId[activeWatchlistId]
+          const selectionCandidate = current.selectedByWatchlistId[resolvedActiveWatchlistId]
           const nextSelectedId = nextItems.some((item) => item.id === selectionCandidate)
             ? selectionCandidate
             : nextItems[0]?.id ?? null
@@ -520,11 +508,11 @@ function App() {
             status: 'ready',
             byWatchlistId: {
               ...current.byWatchlistId,
-              [activeWatchlistId]: nextItems,
+              [resolvedActiveWatchlistId]: nextItems,
             },
             selectedByWatchlistId: {
               ...current.selectedByWatchlistId,
-              [activeWatchlistId]: nextSelectedId,
+              [resolvedActiveWatchlistId]: nextSelectedId,
             },
             error: '',
           }
@@ -535,7 +523,15 @@ function App() {
           setWatchlistItemsState((current) => ({
             ...current,
             status: 'error',
-            error: '自选项接口暂不可用，当前显示示例股票。',
+            byWatchlistId: {
+              ...current.byWatchlistId,
+              [resolvedActiveWatchlistId]: [],
+            },
+            selectedByWatchlistId: {
+              ...current.selectedByWatchlistId,
+              [resolvedActiveWatchlistId]: null,
+            },
+            error: '自选项接口暂不可用。',
           }))
         }
       }
@@ -546,7 +542,93 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [activeWatchlistId, watchlistState.status])
+  }, [resolvedActiveWatchlistId, watchlistState.status])
+
+  useEffect(() => {
+    if (chartSelection || !resolvedActiveWatchlistId || !visibleWatchlistItems.length) {
+      return
+    }
+
+    setChartSelection({
+      watchlistId: resolvedActiveWatchlistId,
+      itemId: currentSelection ?? visibleWatchlistItems[0]?.id ?? null,
+    })
+  }, [chartSelection, currentSelection, resolvedActiveWatchlistId, visibleWatchlistItems])
+
+  useEffect(() => {
+    if (!chartSelection) {
+      return
+    }
+
+    const selectedItems = watchlistItemsState.byWatchlistId[chartSelection.watchlistId]
+    if (!selectedItems) {
+      return
+    }
+
+    if (selectedItems.some((item) => item.id === chartSelection.itemId)) {
+      return
+    }
+
+    const fallbackItemId = watchlistItemsState.selectedByWatchlistId[chartSelection.watchlistId]
+      ?? selectedItems[0]?.id
+      ?? null
+
+    setChartSelection(
+      fallbackItemId
+        ? { watchlistId: chartSelection.watchlistId, itemId: fallbackItemId }
+        : null
+    )
+  }, [chartSelection, watchlistItemsState.byWatchlistId, watchlistItemsState.selectedByWatchlistId])
+
+  useEffect(() => {
+    if (!watchlistContextMenu) {
+      return
+    }
+
+    function handleWindowPointerDown(event) {
+      if (watchlistContextMenuRef.current?.contains(event.target)) {
+        return
+      }
+
+      closeWatchlistItemMenu()
+    }
+
+    function handleWindowKeyDown(event) {
+      if (event.key === 'Escape') {
+        closeWatchlistItemMenu()
+      }
+    }
+
+    window.addEventListener('pointerdown', handleWindowPointerDown)
+    window.addEventListener('keydown', handleWindowKeyDown)
+    window.addEventListener('resize', closeWatchlistItemMenu)
+    window.addEventListener('scroll', closeWatchlistItemMenu, true)
+
+    return () => {
+      window.removeEventListener('pointerdown', handleWindowPointerDown)
+      window.removeEventListener('keydown', handleWindowKeyDown)
+      window.removeEventListener('resize', closeWatchlistItemMenu)
+      window.removeEventListener('scroll', closeWatchlistItemMenu, true)
+    }
+  }, [watchlistContextMenu])
+
+  useEffect(() => {
+    if (!watchlistContextMenu || !watchlistContextMenuRef.current) {
+      return
+    }
+
+    const menu = watchlistContextMenuRef.current
+    const nextX = Math.min(watchlistContextMenu.x, window.innerWidth - menu.offsetWidth - 12)
+    const nextY = Math.min(watchlistContextMenu.y, window.innerHeight - menu.offsetHeight - 12)
+
+    if (nextX !== watchlistContextMenu.x || nextY !== watchlistContextMenu.y) {
+      setWatchlistContextMenu((current) => (
+        current
+          ? { ...current, x: Math.max(12, nextX), y: Math.max(12, nextY) }
+          : current
+      ))
+    }
+  }, [watchlistContextMenu])
 
   useEffect(() => {
     let cancelled = false
@@ -597,7 +679,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-    const symbols = [...new Set(visibleWatchlistItems.map((item) => item.symbol).filter(Boolean))]
+    const symbols = [...new Set(visibleWatchlistSymbols)]
 
     if (!symbols.length) {
       return undefined
@@ -623,7 +705,7 @@ function App() {
                 trend: getTrendClass(changePercent),
               },
             ]
-          } catch (error) {
+          } catch {
             return [symbol, { latestPrice: null, changePercent: null, trend: 'up' }]
           }
         })
@@ -644,7 +726,7 @@ function App() {
       cancelled = true
       window.clearInterval(timerId)
     }
-  }, [visibleWatchlistItems.map((item) => item.symbol).join('|')])
+  }, [visibleWatchlistItems, visibleWatchlistSymbols])
 
   useEffect(() => {
     function syncPanelWidths() {
@@ -717,6 +799,42 @@ function App() {
     viewport.scrollTop = viewport.scrollHeight
   }, [chatMessages])
 
+  useEffect(() => {
+    if (!watchlistModalState.open) {
+      return undefined
+    }
+
+    function handleWindowKeyDown(event) {
+      if (event.key === 'Escape' && !watchlistModalState.saving) {
+        setWatchlistModalState(createWatchlistModalState(watchlistGroups.length))
+      }
+    }
+
+    window.addEventListener('keydown', handleWindowKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleWindowKeyDown)
+    }
+  }, [watchlistGroups.length, watchlistModalState.open, watchlistModalState.saving])
+
+  useEffect(() => {
+    if (!itemEditorState.open) {
+      return undefined
+    }
+
+    function handleWindowKeyDown(event) {
+      if (event.key === 'Escape' && !itemEditorState.saving) {
+        setItemEditorState(createItemEditorState())
+      }
+    }
+
+    window.addEventListener('keydown', handleWindowKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleWindowKeyDown)
+    }
+  }, [itemEditorState.open, itemEditorState.saving])
+
   function updatePanelWidths(updater) {
     const shell = shellRef.current
     if (!shell) {
@@ -774,73 +892,132 @@ function App() {
     setPanelWidths(clampPanelWidths(shell.clientWidth, defaultPanelWidths.left, defaultPanelWidths.right))
   }
 
+  function closeWatchlistItemMenu() {
+    setWatchlistContextMenu(null)
+  }
+
   function handleWatchlistSelect(watchlistId) {
+    closeWatchlistItemMenu()
     setWatchlistState((current) => ({ ...current, activeId: watchlistId }))
   }
 
   function handleWatchlistItemSelect(itemId) {
-    if (!activeWatchlistId) {
+    if (!resolvedActiveWatchlistId) {
       return
     }
 
+    closeWatchlistItemMenu()
     setWatchlistItemsState((current) => ({
       ...current,
       selectedByWatchlistId: {
         ...current.selectedByWatchlistId,
-        [activeWatchlistId]: itemId,
+        [resolvedActiveWatchlistId]: itemId,
       },
     }))
+    setChartSelection({ watchlistId: resolvedActiveWatchlistId, itemId })
   }
 
-  function resetItemEditor() {
-    setItemEditorState({
-      mode: 'create',
-      itemId: null,
-      symbol: '',
-      displayName: '',
-      saving: false,
-      error: '',
+  function openWatchlistItemMenu(item, event) {
+    if (!resolvedActiveWatchlistId) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    setWatchlistContextMenu({
+      item,
+      watchlistId: resolvedActiveWatchlistId,
+      x: event.clientX,
+      y: event.clientY,
     })
   }
 
-  function toggleWatchlistEditor() {
-    setIsWatchlistEditing((current) => {
-      const next = !current
-      if (!next) {
-        resetItemEditor()
+  function handleWatchlistTabsWheel(event) {
+    const tabs = event.currentTarget
+    if (tabs.scrollWidth <= tabs.clientWidth) {
+      return
+    }
+
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+    if (!delta) {
+      return
+    }
+
+    tabs.scrollLeft += delta
+    event.preventDefault()
+  }
+
+  function resetItemEditor(overrides = {}) {
+    setItemEditorState(createItemEditorState(overrides))
+  }
+
+  function openWatchlistModal() {
+    setWatchlistModalState(createWatchlistModalState(watchlistGroups.length, { open: true }))
+  }
+
+  function closeWatchlistModal() {
+    setWatchlistModalState((current) => {
+      if (current.saving) {
+        return current
       }
-      return next
+
+      return createWatchlistModalState(watchlistGroups.length)
+    })
+  }
+
+  function openWatchlistItemModal(item = null) {
+    if (!resolvedActiveWatchlistId) {
+      return
+    }
+
+    if (item) {
+      setItemEditorState(
+        createItemEditorState({
+          open: true,
+          mode: 'edit',
+          itemId: item.id,
+          symbol: item.symbol || '',
+          displayName: item.displayName || '',
+        })
+      )
+      return
+    }
+
+    setItemEditorState(createItemEditorState({ open: true }))
+  }
+
+  function closeWatchlistItemModal() {
+    setItemEditorState((current) => {
+      if (current.saving) {
+        return current
+      }
+
+      return createItemEditorState()
     })
   }
 
   function beginEditWatchlistItem(item, event) {
     event.stopPropagation()
-    setIsWatchlistEditing(true)
-    setItemEditorState({
-      mode: 'edit',
-      itemId: item.id,
-      symbol: item.symbol || '',
-      displayName: item.displayName || '',
-      saving: false,
-      error: '',
-    })
+    openWatchlistItemModal(item)
   }
 
-  async function handleWatchlistItemDelete(item, event) {
-    event.stopPropagation()
+  async function handleWatchlistItemDelete(item, event = null, watchlistId = resolvedActiveWatchlistId) {
+    event?.stopPropagation()
 
-    if (!activeWatchlistId || !window.confirm(`确认删除 ${item.symbol} 吗？`)) {
+    if (!watchlistId || !window.confirm(`确认从当前 watchlist 移除 ${item.symbol} 吗？`)) {
       return
     }
 
+    closeWatchlistItemMenu()
+
     try {
-      await requestApiData(`${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(activeWatchlistId)}/items/${encodeURIComponent(item.id)}`, {
+      await requestApiData(`${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(watchlistId)}/items/${encodeURIComponent(item.id)}`, {
         method: 'DELETE',
       })
-      await loadWatchlists(activeWatchlistId)
-      await loadWatchlistItems(activeWatchlistId)
+      await loadWatchlists(watchlistId)
+      await loadWatchlistItems(watchlistId)
       if (itemEditorState.itemId === item.id) {
-        resetItemEditor()
+        resetItemEditor({ open: true })
       }
     } catch (error) {
       console.error('[App] Failed to delete watchlist item.', error)
@@ -851,10 +1028,49 @@ function App() {
     }
   }
 
+  async function handleWatchlistCreate(event) {
+    event.preventDefault()
+
+    const name = watchlistModalState.name.trim()
+    if (!name) {
+      setWatchlistModalState((current) => ({
+        ...current,
+        error: '请输入分组名称。',
+      }))
+      return
+    }
+
+    setWatchlistModalState((current) => ({
+      ...current,
+      saving: true,
+      error: '',
+    }))
+
+    try {
+      const result = await requestApiData(`${watchlistApiBaseUrl}/api/v1/watchlists`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          isDefault: watchlistModalState.isDefault,
+        }),
+      })
+
+      await loadWatchlists(result?.id ?? null)
+      setWatchlistModalState(createWatchlistModalState(watchlistGroups.length + 1))
+    } catch (error) {
+      console.error('[App] Failed to create watchlist.', error)
+      setWatchlistModalState((current) => ({
+        ...current,
+        saving: false,
+        error: error.message || '创建分组失败，请稍后再试。',
+      }))
+    }
+  }
+
   async function handleWatchlistItemSubmit(event) {
     event.preventDefault()
 
-    if (!activeWatchlistId) {
+    if (!resolvedActiveWatchlistId) {
       return
     }
 
@@ -876,8 +1092,8 @@ function App() {
 
     const isEditing = itemEditorState.mode === 'edit' && itemEditorState.itemId
     const requestUrl = isEditing
-      ? `${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(activeWatchlistId)}/items/${encodeURIComponent(itemEditorState.itemId)}`
-      : `${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(activeWatchlistId)}/items`
+      ? `${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(resolvedActiveWatchlistId)}/items/${encodeURIComponent(itemEditorState.itemId)}`
+      : `${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(resolvedActiveWatchlistId)}/items`
 
     try {
       const result = await requestApiData(requestUrl, {
@@ -888,8 +1104,8 @@ function App() {
         }),
       })
 
-      await loadWatchlists(activeWatchlistId)
-      await loadWatchlistItems(activeWatchlistId, result?.id || null)
+      await loadWatchlists(resolvedActiveWatchlistId)
+      await loadWatchlistItems(resolvedActiveWatchlistId, result?.id || null)
       resetItemEditor()
     } catch (error) {
       console.error('[App] Failed to save watchlist item.', error)
@@ -939,7 +1155,8 @@ function App() {
   }
 
   return (
-    <main className="terminal-page">
+    <>
+      <main className="terminal-page">
       <section ref={shellRef} className="terminal-shell" style={shellStyle}>
         <aside className="watchlist-panel">
           <header className="panel-title-row">
@@ -947,17 +1164,19 @@ function App() {
               <p className="panel-kicker">自选列表</p>
               <h1>股票终端</h1>
             </div>
-            <button type="button" className="tiny-action" onClick={toggleWatchlistEditor}>
-              {isWatchlistEditing ? '收起' : '编辑'}
-            </button>
+            <div className="panel-title-actions">
+              <button type="button" className="tiny-action ghost" onClick={openWatchlistModal}>
+                新增分组
+              </button>
+            </div>
           </header>
 
-          <div className="board-tabs" aria-label="分组标签">
+          <div className="board-tabs" aria-label="分组标签" onWheel={handleWatchlistTabsWheel}>
             {watchlistGroups.map((group) => (
               <button
                 key={group.id}
                 type="button"
-                className={`board-tab ${group.id === activeWatchlistId ? 'active' : ''}`}
+                className={`board-tab ${group.id === resolvedActiveWatchlistId ? 'active' : ''}`}
                 onClick={() => handleWatchlistSelect(group.id)}
               >
                 <span>{group.name}</span>
@@ -966,86 +1185,71 @@ function App() {
             ))}
           </div>
 
-          {watchlistStatusMessage ? <p className="watchlist-status-note">{watchlistStatusMessage}</p> : null}
+          <div className="watchlist-table">
+            <div className="watchlist-head">
+              <span>名称/代码</span>
+              <span>最新价</span>
+              <span>涨跌幅</span>
+            </div>
 
-          {isWatchlistEditing ? (
-            <form className="watchlist-item-editor" onSubmit={handleWatchlistItemSubmit}>
-              <div className="watchlist-item-editor-head">
-                <strong>{itemEditorState.mode === 'edit' ? '修改标的' : '新增标的'}</strong>
-                <button type="button" className="tiny-action ghost" onClick={resetItemEditor}>
-                  {itemEditorState.mode === 'edit' ? '切回新增' : '清空'}
-                </button>
-              </div>
-              <label>
-                <span>代码</span>
-                <input
-                  value={itemEditorState.symbol}
-                  onChange={(event) => setItemEditorState((current) => ({ ...current, symbol: event.target.value }))}
-                  placeholder="例如 GOOG.US"
-                />
-              </label>
-              <label>
-                <span>别名</span>
-                <input
-                  value={itemEditorState.displayName}
-                  onChange={(event) => setItemEditorState((current) => ({ ...current, displayName: event.target.value }))}
-                  placeholder="可选，例如 谷歌-C"
-                />
-              </label>
-              {itemEditorState.error ? <p className="watchlist-editor-error">{itemEditorState.error}</p> : null}
-              <div className="watchlist-item-editor-actions">
-                <button type="submit" className="ai-send-button" disabled={itemEditorState.saving}>
-                  {itemEditorState.saving ? '保存中...' : itemEditorState.mode === 'edit' ? '保存修改' : '添加标的'}
-                </button>
-              </div>
-            </form>
-          ) : null}
+            <div className="watchlist-rows">
+              {visibleWatchlistItems.length ? (
+                <>
+                  {visibleWatchlistItems.map((item) => {
+                    const quote = quoteSnapshots[item.symbol]
+                    const isActive = item.id === highlightedWatchlistItemId
+                    const isMenuOpen = watchlistContextMenu?.item.id === item.id && watchlistContextMenu.watchlistId === resolvedActiveWatchlistId
+                    const rowChange = getWatchlistRowChange(item, quote)
+                    const rowTone = quote?.trend || item.trend || 'up'
 
-          <div className="watchlist-head">
-            <span>名称/代码</span>
-            <span>最新价</span>
-            <span>涨跌幅</span>
-          </div>
-
-          <div className="watchlist-rows">
-            {visibleWatchlistItems.length ? (
-              visibleWatchlistItems.map((item) => {
-                const quote = quoteSnapshots[item.symbol]
-                const isActive = item.id === activeWatchlistItem?.id
-                const rowChange = getWatchlistRowChange(item, quote)
-                const rowTone = quote?.trend || item.trend || 'up'
-
-                return (
-                  <article
-                    key={item.id}
-                    className={`watchlist-row ${isActive ? 'active' : ''}`}
-                    onClick={() => handleWatchlistItemSelect(item.id)}
-                  >
-                    <div className="watchlist-name">
-                      <strong>{getItemTicker(item)}</strong>
-                      <span>{getItemName(item)}</span>
-                      {isWatchlistEditing && !useFallbackItems ? (
-                        <div className="watchlist-row-actions">
-                          <button type="button" className="tiny-action ghost" onClick={(event) => beginEditWatchlistItem(item, event)}>
-                            修改
-                          </button>
-                          <button type="button" className="tiny-action danger" onClick={(event) => handleWatchlistItemDelete(item, event)}>
-                            删除
-                          </button>
+                    return (
+                      <article
+                        key={item.id}
+                        className={`watchlist-row ${isActive ? 'active' : ''} ${isMenuOpen ? 'menu-open' : ''}`.trim()}
+                        onClick={() => handleWatchlistItemSelect(item.id)}
+                        onContextMenu={(event) => openWatchlistItemMenu(item, event)}
+                      >
+                        <div className="watchlist-name">
+                          <strong>{getItemTicker(item)}</strong>
+                          <span>{getItemName(item)}</span>
                         </div>
-                      ) : null}
+                        <div className="watchlist-price">{getWatchlistRowPrice(item, quote)}</div>
+                        <div className={`watchlist-change ${rowTone}`}>{rowChange}</div>
+                      </article>
+                    )
+                  })}
+                  <div className="watchlist-row watchlist-row-action">
+                    <button type="button" className="tiny-action" onClick={() => openWatchlistItemModal()} disabled={!resolvedActiveWatchlistId}>
+                      添加
+                    </button>
+                  </div>
+                </>
+              ) : activeWatchlist ? (
+                <>
+                  <div className="watchlist-empty-state">
+                    <div className="watchlist-empty-copy">
+                      <strong>当前分组还没有标的</strong>
+                      <span>点击下方“添加”即可通过弹窗给当前 watchlist 添加标的。</span>
                     </div>
-                    <div className="watchlist-price">{getWatchlistRowPrice(item, quote)}</div>
-                    <div className={`watchlist-change ${rowTone}`}>{rowChange}</div>
-                  </article>
-                )
-              })
-            ) : (
-              <div className="watchlist-empty-state">
-                <strong>当前分组还没有标的</strong>
-                <span>{isWatchlistEditing ? '直接在上方输入代码添加第一只股票。' : '点击右上角“编辑”即可添加。'}</span>
-              </div>
-            )}
+                  </div>
+                  <div className="watchlist-row watchlist-row-action">
+                    <button type="button" className="tiny-action" onClick={() => openWatchlistItemModal()}>
+                      添加
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="watchlist-empty-state">
+                  <div className="watchlist-empty-copy">
+                    <strong>暂无可展示的自选内容</strong>
+                    <span>点击“新增分组”即可创建你的第一个 watchlist。</span>
+                  </div>
+                  <button type="button" className="tiny-action watchlist-empty-action" onClick={openWatchlistModal}>
+                    添加分组
+                  </button>
+                </div>
+              )}
+            </div>
 
             <div className="watchlist-footnote">
               当前分组：{activeWatchlist?.name ?? '--'} · 项数 {activeWatchlist?.itemCount ?? visibleWatchlistItems.length ?? '--'}
@@ -1066,28 +1270,16 @@ function App() {
 
         <section className="chart-panel">
           <header className="chart-header">
-            <div>
-              <div className="symbol-line">
-                <strong>{activeShortSymbol}</strong>
-                <span className="after-hours">{activeExchange} · UDF</span>
-                <span className={chartChangeTone}>{formatPercent(chartSnapshot.changePercent)}</span>
-              </div>
-              <p className="chart-subline">{activeDescription} · {activeMarketLabel} · {activeTimeframe}</p>
-            </div>
-
-            <div className="chart-header-metrics">
-              <div>
-                <span>价格</span>
-                <strong>{chartPrice}</strong>
-              </div>
-              <div>
-                <span>MA5</span>
-                <strong>{chartMa5}</strong>
-              </div>
-              <div>
-                <span>最新成交量</span>
-                <strong>{chartVolume}</strong>
-              </div>
+            <div className="symbol-line">
+              <strong>{activeShortSymbol}</strong>
+              <span className="after-hours">{activeExchange} · UDF</span>
+              <span className={chartChangeTone}>{formatPercent(chartSnapshot.changePercent)}</span>
+              <span
+                className="chart-subline"
+                title={`${activeDescription} · ${activeMarketLabel} · ${activeTimeframe}`}
+              >
+                {activeDescription} · {activeMarketLabel} · {activeTimeframe}
+              </span>
             </div>
           </header>
 
@@ -1189,19 +1381,193 @@ function App() {
         </aside>
       </section>
 
-      <footer className="terminal-footer">
-        <div className="footer-indexes">
-          {footerIndexes.map((item) => (
-            <article key={item.name} className="footer-index">
-              <span>{item.name}</span>
-              <strong>{item.value}</strong>
-              <em className={item.trend}>{item.change}</em>
-            </article>
-          ))}
+        <footer className="terminal-footer">
+          <div className="footer-indexes">
+            {footerIndexes.map((item) => (
+              <article key={item.name} className="footer-index">
+                <span>{item.name}</span>
+                <strong>{item.value}</strong>
+                <em className={item.trend}>{item.change}</em>
+              </article>
+            ))}
+          </div>
+          <div className="system-clock">2026/04/12 14:05:42</div>
+        </footer>
+      </main>
+
+      {watchlistContextMenu ? (
+        <div
+          ref={watchlistContextMenuRef}
+          className="watchlist-context-menu"
+          style={{ left: `${watchlistContextMenu.x}px`, top: `${watchlistContextMenu.y}px` }}
+          role="menu"
+          aria-label={`${watchlistContextMenu.item.symbol} 操作菜单`}
+        >
+          <button
+            type="button"
+            className="watchlist-context-menu-item danger"
+            onClick={(event) => handleWatchlistItemDelete(watchlistContextMenu.item, event, watchlistContextMenu.watchlistId)}
+          >
+            从当前 watchlist 移除
+          </button>
         </div>
-        <div className="system-clock">2026/04/12 14:05:42</div>
-      </footer>
-    </main>
+      ) : null}
+
+      {watchlistModalState.open ? (
+        <div className="watchlist-modal-backdrop" onClick={closeWatchlistModal}>
+          <div className="watchlist-modal" role="dialog" aria-modal="true" aria-labelledby="watchlist-modal-title" onClick={(event) => event.stopPropagation()}>
+            <form className="watchlist-modal-form" onSubmit={handleWatchlistCreate}>
+              <div className="watchlist-modal-head">
+                <div>
+                  <p className="panel-kicker">Watchlist</p>
+                  <h2 id="watchlist-modal-title">新增分组</h2>
+                </div>
+                <button type="button" className="tiny-action ghost" onClick={closeWatchlistModal} disabled={watchlistModalState.saving}>
+                  关闭
+                </button>
+              </div>
+
+              <label>
+                <span>分组名称</span>
+                <input
+                  autoFocus
+                  value={watchlistModalState.name}
+                  onChange={(event) => setWatchlistModalState((current) => ({ ...current, name: event.target.value, error: '' }))}
+                  placeholder="例如 AI 观察池"
+                />
+              </label>
+
+              <label className="watchlist-modal-checkbox">
+                <input
+                  type="checkbox"
+                  checked={watchlistModalState.isDefault}
+                  onChange={(event) => setWatchlistModalState((current) => ({ ...current, isDefault: event.target.checked }))}
+                />
+                <span>设为默认分组</span>
+              </label>
+
+              {watchlistModalState.error ? <p className="watchlist-editor-error">{watchlistModalState.error}</p> : null}
+
+              <div className="watchlist-modal-actions">
+                <button type="button" className="tiny-action ghost" onClick={closeWatchlistModal} disabled={watchlistModalState.saving}>
+                  取消
+                </button>
+                <button type="submit" className="ai-send-button" disabled={watchlistModalState.saving}>
+                  {watchlistModalState.saving ? '创建中...' : '创建分组'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {itemEditorState.open ? (
+        <div className="watchlist-modal-backdrop" onClick={closeWatchlistItemModal}>
+          <div
+            className="watchlist-modal watchlist-item-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="watchlist-item-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="watchlist-item-modal-layout">
+              <form className="watchlist-modal-form watchlist-item-modal-form" onSubmit={handleWatchlistItemSubmit}>
+                <div className="watchlist-modal-head">
+                  <div>
+                    <p className="panel-kicker">{activeWatchlist?.name ?? 'Watchlist'}</p>
+                    <h2 id="watchlist-item-modal-title">{itemEditorState.mode === 'edit' ? '编辑标的' : '新增标的'}</h2>
+                  </div>
+                  <button type="button" className="tiny-action ghost" onClick={closeWatchlistItemModal} disabled={itemEditorState.saving}>
+                    关闭
+                  </button>
+                </div>
+
+                <label>
+                  <span>代码</span>
+                  <input
+                    autoFocus
+                    value={itemEditorState.symbol}
+                    onChange={(event) => setItemEditorState((current) => ({ ...current, symbol: event.target.value, error: '' }))}
+                    placeholder="例如 GOOG.US"
+                  />
+                </label>
+
+                <label>
+                  <span>别名</span>
+                  <input
+                    value={itemEditorState.displayName}
+                    onChange={(event) => setItemEditorState((current) => ({ ...current, displayName: event.target.value, error: '' }))}
+                    placeholder="可选，例如 谷歌-C"
+                  />
+                </label>
+
+                {itemEditorState.error ? <p className="watchlist-editor-error">{itemEditorState.error}</p> : null}
+
+                <div className="watchlist-modal-actions">
+                  <button
+                    type="button"
+                    className="tiny-action ghost"
+                    onClick={() => resetItemEditor({ open: true })}
+                    disabled={itemEditorState.saving}
+                  >
+                    {itemEditorState.mode === 'edit' ? '切换到新增' : '清空'}
+                  </button>
+                  <button type="submit" className="ai-send-button" disabled={itemEditorState.saving}>
+                    {itemEditorState.saving ? '保存中...' : itemEditorState.mode === 'edit' ? '保存修改' : '添加标的'}
+                  </button>
+                </div>
+              </form>
+
+              <section className="watchlist-item-manage-list" aria-label="当前分组标的">
+                <div className="watchlist-item-manage-head">
+                  <strong>当前分组标的</strong>
+                  <span>{activeWatchlist?.itemCount ?? visibleWatchlistItems.length ?? 0} 项</span>
+                </div>
+
+                {visibleWatchlistItems.length ? (
+                  <div className="watchlist-item-manage-rows">
+                    {visibleWatchlistItems.map((item) => (
+                      <article
+                        key={item.id}
+                        className={`watchlist-item-manage-row ${itemEditorState.itemId === item.id ? 'active' : ''}`}
+                      >
+                        <div className="watchlist-item-manage-copy">
+                          <strong>{getItemTicker(item)}</strong>
+                          <span>{getItemName(item)}</span>
+                        </div>
+                        <div className="watchlist-item-manage-actions">
+                          <button
+                            type="button"
+                            className="tiny-action ghost"
+                            onClick={(event) => beginEditWatchlistItem(item, event)}
+                            disabled={itemEditorState.saving}
+                          >
+                            {itemEditorState.itemId === item.id && itemEditorState.mode === 'edit' ? '编辑中' : '修改'}
+                          </button>
+                          <button
+                            type="button"
+                            className="tiny-action danger"
+                            onClick={(event) => handleWatchlistItemDelete(item, event)}
+                            disabled={itemEditorState.saving}
+                          >
+                            删除
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="watchlist-item-manage-empty">
+                    <strong>当前分组还没有标的</strong>
+                    <span>先在上方输入代码，再点击“添加标的”。</span>
+                  </div>
+                )}
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   )
 }
 

@@ -62,7 +62,7 @@ X-Request-Id: <uuid>
 
 ```json
 {
-  "id": "wl_recent_etf",
+  "id": 2,
   "name": "最近关注 ETF",
   "sort": 2,
   "isDefault": true,
@@ -76,7 +76,7 @@ X-Request-Id: <uuid>
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| id | string | 自选分组 ID |
+| id | integer | 自选分组 ID，自增主键 |
 | name | string | 分组名称 |
 | sort | integer | 排序值，数值越小越靠前 |
 | isDefault | boolean | 是否默认分组 |
@@ -108,7 +108,7 @@ X-Request-Id: <uuid>
   "message": "ok",
   "data": [
     {
-      "id": "wl_holdings",
+      "id": 1,
       "name": "持仓",
       "sort": 1,
       "isDefault": false,
@@ -117,7 +117,7 @@ X-Request-Id: <uuid>
       "updatedAt": "2026-04-12T14:05:42Z"
     },
     {
-      "id": "wl_recent_etf",
+      "id": 2,
       "name": "最近关注 ETF",
       "sort": 2,
       "isDefault": true,
@@ -141,7 +141,7 @@ X-Request-Id: <uuid>
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| watchlistId | string | 是 | 自选分组 ID |
+| watchlistId | integer | 是 | 自选分组 ID |
 
 ### 响应示例
 
@@ -150,7 +150,7 @@ X-Request-Id: <uuid>
   "code": 0,
   "message": "ok",
   "data": {
-    "id": "wl_recent_etf",
+    "id": 2,
     "name": "最近关注 ETF",
     "sort": 2,
     "isDefault": true,
@@ -187,6 +187,8 @@ X-Request-Id: <uuid>
 | sort | integer | 否 | 排序值，不传则追加到末尾 |
 | isDefault | boolean | 否 | 是否设为默认分组，默认 `false` |
 
+> `id` 由服务端自动分配，返回值为自增整数。
+
 ### 响应示例
 
 ```json
@@ -194,7 +196,7 @@ X-Request-Id: <uuid>
   "code": 0,
   "message": "ok",
   "data": {
-    "id": "wl_semiconductor",
+    "id": 3,
     "name": "半导体",
     "sort": 3,
     "isDefault": false,
@@ -217,7 +219,7 @@ X-Request-Id: <uuid>
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| watchlistId | string | 是 | 自选分组 ID |
+| watchlistId | integer | 是 | 自选分组 ID |
 
 ### 请求体
 
@@ -244,7 +246,7 @@ X-Request-Id: <uuid>
   "code": 0,
   "message": "ok",
   "data": {
-    "id": "wl_recent_etf",
+    "id": 2,
     "name": "重点观察 ETF",
     "sort": 1,
     "isDefault": true,
@@ -267,7 +269,7 @@ X-Request-Id: <uuid>
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| watchlistId | string | 是 | 自选分组 ID |
+| watchlistId | integer | 是 | 自选分组 ID |
 
 ### 删除约定
 
@@ -300,5 +302,5 @@ X-Request-Id: <uuid>
 
 - `GET /watchlists/{watchlistId}/items`
 - `POST /watchlists/{watchlistId}/items`
-- `PATCH /watchlists/{watchlistId}/items/{symbol}`
-- `DELETE /watchlists/{watchlistId}/items/{symbol}`
+- `PATCH /watchlists/{watchlistId}/items/{itemId}`
+- `DELETE /watchlists/{watchlistId}/items/{itemId}`

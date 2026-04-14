@@ -3,6 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 const libraryPath = '/charting_library/'
 const libraryScriptPath = `${libraryPath}charting_library.js`
 const defaultUdfBaseUrl = 'http://127.0.0.1:5200'
+const defaultMovingAverageStudies = [
+  { length: 5, color: '#7fd1ff' },
+  { length: 8, color: '#ffc857' },
+  { length: 13, color: '#b983ff' },
+]
 const defaultDatafeedConfig = {
   supported_resolutions: ['1', '5', '15', '30', '60', '240', '1D', '1W', '1M'],
   supports_group_request: false,
@@ -327,9 +332,8 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
           hide_top_toolbar: false,
           hide_legend: false,
           withdateranges: true,
-          allow_symbol_change: false,
+          allow_symbol_change: true,
           disabled_features: [
-            'header_symbol_search',
             'header_compare',
             'header_screenshot',
             'header_undo_redo',
@@ -337,15 +341,15 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
             'timeframes_toolbar',
             'use_localstorage_for_settings',
           ],
-          enabled_features: ['study_templates'],
+          enabled_features: ['study_templates', 'legend_inplace_edit'],
           overrides: {
             'paneProperties.background': '#0d1420',
             'paneProperties.backgroundType': 'solid',
             'paneProperties.vertGridProperties.color': 'rgba(177, 189, 210, 0.08)',
             'paneProperties.horzGridProperties.color': 'rgba(177, 189, 210, 0.08)',
-            'paneProperties.legendProperties.showStudyArguments': false,
-            'paneProperties.legendProperties.showStudyTitles': false,
-            'paneProperties.legendProperties.showStudyValues': false,
+            'paneProperties.legendProperties.showStudyArguments': true,
+            'paneProperties.legendProperties.showStudyTitles': true,
+            'paneProperties.legendProperties.showStudyValues': true,
             'paneProperties.legendProperties.showSeriesTitle': false,
             'paneProperties.legendProperties.showSeriesOHLC': false,
             'paneProperties.legendProperties.showBarChange': false,
@@ -373,24 +377,32 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
         widgetRef.current = localWidget
 
-        localWidget.onChartReady(() => {
+        localWidget.onChartReady(async () => {
           if (cancelled || !widgetRef.current) {
             return
           }
 
           const chart = localWidget.activeChart()
-          chart.createStudy('Moving Average', false, false, [5], null, {
-            'Plot.color': '#7fd1ff',
-            'Plot.linewidth': 2,
-          })
-          chart.createStudy('Moving Average', false, false, [8], null, {
-            'Plot.color': '#ffc857',
-            'Plot.linewidth': 2,
-          })
-          chart.createStudy('Moving Average', false, false, [13], null, {
-            'Plot.color': '#b983ff',
-            'Plot.linewidth': 2,
-          })
+
+          try {
+            await Promise.all(
+              defaultMovingAverageStudies.map(({ length, color }) =>
+                chart.createStudy(
+                  'Moving Average',
+                  true,
+                  false,
+                  { length, source: 'close' },
+                  {
+                    'Plot.color': color,
+                    'Plot.linewidth': 2,
+                  }
+                )
+              )
+            )
+          } catch (error) {
+            console.error('[TradingChart] Failed to mount default moving average studies.', error)
+          }
+
           mountedRef.current = true
         })
       } catch (error) {
