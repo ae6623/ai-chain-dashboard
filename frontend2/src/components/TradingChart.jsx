@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { getCustomIndicators } from './chart/customIndicators'
+import {
+  closeVsPrevStudyName,
+  getCustomIndicators,
+  openVsLatestCloseInputId,
+  openVsLatestCloseStudyName,
+} from './chart/customIndicators'
 
 const libraryPath = '/charting_library/'
 const libraryScriptPath = `${libraryPath}charting_library.js`
 const defaultUdfBaseUrl = 'http://127.0.0.1:5200'
-const defaultMovingAverageStudies = [
-  { length: 5, color: '#7fd1ff' },
-  { length: 8, color: '#ffc857' },
-  { length: 13, color: '#b983ff' },
-]
+const defaultTrendStudyName = 'Moving Average Triple'
+const legacyTrendStudyNames = ['Triple EMA']
 const defaultDatafeedConfig = {
   supported_resolutions: ['1', '5', '15', '30', '60', '240', '1D', '1W', '1M'],
   supports_group_request: false,
@@ -31,46 +33,9 @@ function mergeBars(existingBars, incomingBars) {
 }
 
 
-function normalizeCrosshairTime(time) {
-  return time > 1e12 ? time : time * 1000
-}
-
-function calculateHoverMetrics(bars, hoveredTime) {
-  if (!Array.isArray(bars) || bars.length === 0 || !Number.isFinite(hoveredTime)) {
-    return null
-  }
-
-  const normalizedTime = normalizeCrosshairTime(hoveredTime)
-  const barIndex = bars.findIndex((bar) => bar.time === normalizedTime)
-  if (barIndex < 0) {
-    return null
-  }
-
-  const bar = bars[barIndex]
-  const previousBar = bars[barIndex - 1]
+function getLatestClose(bars) {
   const latestClose = bars.at(-1)?.close
-  const closeVsPrev =
-    Number.isFinite(previousBar?.close) && previousBar.close !== 0
-      ? ((bar.close - previousBar.close) / previousBar.close) * 100
-      : Number.NaN
-  const openVsLatestClose =
-    Number.isFinite(latestClose) && Number.isFinite(bar?.open) && bar.open !== 0
-      ? ((latestClose - bar.open) / bar.open) * 100
-      : Number.NaN
-
-  return {
-    closeVsPrev,
-    openVsLatestClose,
-  }
-}
-
-function formatPercent(value) {
-  if (!Number.isFinite(value)) {
-    return '--'
-  }
-
-  const prefix = value > 0 ? '+' : ''
-  return `${prefix}${value.toFixed(2)}%`
+  return Number.isFinite(latestClose) ? latestClose : null
 }
 
 function loadTradingViewScript() {
@@ -104,6 +69,10 @@ function loadTradingViewScript() {
 
 function normalizeBaseUrl(baseUrl = defaultUdfBaseUrl) {
   return String(baseUrl || defaultUdfBaseUrl).replace(/\/$/, '')
+}
+
+function findStudyIdByName(chart, studyName) {
+  return chart.getAllStudies().find(({ name }) => name === studyName)?.id ?? null
 }
 
 function normalizeResolution(resolution) {
@@ -347,40 +316,46 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
   const containerRef = useRef(null)
   const widgetRef = useRef(null)
   const chartApiRef = useRef(null)
-  const hoveredBarTimeRef = useRef(null)
+  const openVsLatestCloseStudyIdRef = useRef(null)
   const barsRef = useRef([])
   const [loadError, setLoadError] = useState('')
-  const [hoverMetrics, setHoverMetrics] = useState(null)
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
-  const syncHoverMetrics = useCallback(() => {
-    if (!Number.isFinite(hoveredBarTimeRef.current)) {
+  const syncHoverLegendStudyInput = useCallback((bars = barsRef.current) => {
+    const chart = chartApiRef.current
+    const studyId = openVsLatestCloseStudyIdRef.current
+    const latestClose = getLatestClose(bars)
+
+    if (!chart || !studyId || latestClose === null) {
       return
     }
 
-    setHoverMetrics(calculateHoverMetrics(barsRef.current, hoveredBarTimeRef.current))
+    try {
+      chart.getStudyById(studyId).setInputValues([{ id: openVsLatestCloseInputId, value: latestClose }])
+    } catch (error) {
+      console.error('[TradingChart] Failed to sync hover legend study input.', error)
+    }
   }, [])
   const storeBars = useCallback((incomingBars) => {
-    barsRef.current = mergeBars(barsRef.current, incomingBars)
-    syncHoverMetrics()
-  }, [syncHoverMetrics])
+    const nextBars = mergeBars(barsRef.current, incomingBars)
+    barsRef.current = nextBars
+    syncHoverLegendStudyInput(nextBars)
+  }, [syncHoverLegendStudyInput])
   const storeLatestBar = useCallback((incomingBar) => {
     if (!incomingBar) {
       return
     }
 
-    barsRef.current = mergeBars(barsRef.current, [incomingBar])
-    syncHoverMetrics()
-  }, [syncHoverMetrics])
+    const nextBars = mergeBars(barsRef.current, [incomingBar])
+    barsRef.current = nextBars
+    syncHoverLegendStudyInput(nextBars)
+  }, [syncHoverLegendStudyInput])
   useEffect(() => {
     barsRef.current = []
     chartApiRef.current = null
-    hoveredBarTimeRef.current = null
-    setHoverMetrics(null)
+    openVsLatestCloseStudyIdRef.current = null
 
     let cancelled = false
     let localWidget = null
-    let crossHairSubscription = null
-    let handleCrossHairMoved = null
 
     async function mountWidget() {
       if (!containerRef.current) {
@@ -429,7 +404,6 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
             'header_undo_redo',
             'display_market_status',
             'timeframes_toolbar',
-            'use_localstorage_for_settings',
           ],
           enabled_features: ['study_templates', 'legend_inplace_edit'],
           overrides: {
@@ -474,36 +448,46 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
           const chart = localWidget.activeChart()
           chartApiRef.current = chart
-          crossHairSubscription = chart.crossHairMoved()
-          handleCrossHairMoved = ({ time }) => {
-            if (!Number.isFinite(time)) {
-              hoveredBarTimeRef.current = null
-              setHoverMetrics(null)
-              return
-            }
-
-            hoveredBarTimeRef.current = time
-            setHoverMetrics(calculateHoverMetrics(barsRef.current, time))
-          }
-          crossHairSubscription.subscribe(null, handleCrossHairMoved)
 
           try {
-            await Promise.all(
-              defaultMovingAverageStudies.map(({ length, color }) =>
-                chart.createStudy(
-                  'Moving Average',
-                  true,
-                  false,
-                  { length, source: 'close' },
-                  {
-                    'Plot.color': color,
-                    'Plot.linewidth': 2,
-                  }
-                )
+            legacyTrendStudyNames.forEach((studyName) => {
+              const legacyStudyId = findStudyIdByName(chart, studyName)
+              if (legacyStudyId) {
+                chart.removeEntity(legacyStudyId)
+              }
+            })
+
+            if (!findStudyIdByName(chart, defaultTrendStudyName)) {
+              await chart.createStudy(defaultTrendStudyName, true, false)
+            }
+
+            if (!findStudyIdByName(chart, closeVsPrevStudyName)) {
+              await chart.createStudy(closeVsPrevStudyName, true, false, undefined, undefined, {
+                priceScale: 'no-scale',
+              })
+            }
+
+            let openVsLatestCloseStudyId = findStudyIdByName(chart, openVsLatestCloseStudyName)
+
+            if (!openVsLatestCloseStudyId) {
+              openVsLatestCloseStudyId = await chart.createStudy(
+                openVsLatestCloseStudyName,
+                true,
+                false,
+                { [openVsLatestCloseInputId]: getLatestClose(barsRef.current) ?? 0 },
+                undefined,
+                {
+                  priceScale: 'no-scale',
+                }
               )
-            )
+            }
+
+            if (openVsLatestCloseStudyId) {
+              openVsLatestCloseStudyIdRef.current = openVsLatestCloseStudyId
+              syncHoverLegendStudyInput()
+            }
           } catch (error) {
-            console.error('[TradingChart] Failed to mount default moving average studies.', error)
+            console.error('[TradingChart] Failed to mount chart studies.', error)
           }
         })
       } catch (error) {
@@ -520,11 +504,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
     return () => {
       cancelled = true
       chartApiRef.current = null
-      hoveredBarTimeRef.current = null
-      setHoverMetrics(null)
-      if (crossHairSubscription && handleCrossHairMoved) {
-        crossHairSubscription.unsubscribe(null, handleCrossHairMoved)
-      }
+      openVsLatestCloseStudyIdRef.current = null
       if (localWidget) {
         localWidget.remove()
       }
@@ -532,14 +512,10 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
         widgetRef.current = null
       }
     }
-  }, [description, interval, normalizedBaseUrl, storeBars, storeLatestBar, symbol])
+  }, [description, interval, normalizedBaseUrl, storeBars, storeLatestBar, symbol, syncHoverLegendStudyInput])
 
   return (
     <div className="price-chart tv-chart-shell">
-      <div className="tv-hover-metrics" aria-live="polite">
-        <span className={`tv-hover-metrics__item ${hoverMetrics?.closeVsPrev >= 0 ? 'up' : 'down'}`}>收盘较昨收 {formatPercent(hoverMetrics?.closeVsPrev)}</span>
-        <span className={`tv-hover-metrics__item ${hoverMetrics?.openVsLatestClose >= 0 ? 'up' : 'down'}`}>开盘较今收 {formatPercent(hoverMetrics?.openVsLatestClose)}</span>
-      </div>
       <div ref={containerRef} className="tv-chart-container" />
       {loadError ? (
         <div className="tv-chart-fallback">
