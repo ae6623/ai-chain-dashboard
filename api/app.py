@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import db, Symbol, Watchlist, WatchlistItem
 from form import F_str, F_int, form_validator, FormError
 from const import SymbolType, Provider
-from symbol_registry import sync_longbridge_symbol
+from symbol_registry import search_longbridge_symbols, sync_longbridge_symbol
 
 # ---------- logging ----------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -751,6 +751,13 @@ def validate_symbol(symbol):
         return None
 
 
+def build_udf_symbol_payload(symbol_obj):
+    symbol_data = symbol_obj.to_dict_extended()
+    if 'supported_resolutions' not in symbol_data:
+        symbol_data['supported_resolutions'] = BASE_UDF_CONFIG['supported_resolutions']
+    return symbol_data
+
+
 @bp.route('/config')
 def config_route():
     return jsonify(get_dynamic_udf_config())
@@ -769,10 +776,7 @@ def symbols(vars):
     symbol_obj = validate_symbol(vars['symbol'])
     if not symbol_obj:
         return json_error(f"Symbol '{vars['symbol']}' not found")
-    symbol_data = symbol_obj.to_dict_extended()
-    if 'supported_resolutions' not in symbol_data:
-        symbol_data["supported_resolutions"] = BASE_UDF_CONFIG["supported_resolutions"]
-    return jsonify(symbol_data)
+    return jsonify(build_udf_symbol_payload(symbol_obj))
 
 
 @bp.route('/search')
@@ -790,12 +794,24 @@ def search(vars):
         is_visible=True,
         limit=vars['limit']
     )
+    if vars['query'] and len(symbols_list) < vars['limit']:
+        remaining = vars['limit'] - len(symbols_list)
+        seen_symbols = {symbol.symbol for symbol in symbols_list}
+        for symbol in search_longbridge_symbols(
+            query=vars['query'],
+            symbol_type=vars['type'],
+            exchange=vars['exchange'],
+            limit=remaining,
+        ):
+            if symbol.symbol not in seen_symbols:
+                symbols_list.append(symbol)
+                seen_symbols.add(symbol.symbol)
+                if len(symbols_list) >= vars['limit']:
+                    break
+
     matching_symbols = []
     for symbol in symbols_list:
-        symbol_data = symbol.to_dict_extended()
-        if 'supported_resolutions' not in symbol_data:
-            symbol_data["supported_resolutions"] = BASE_UDF_CONFIG["supported_resolutions"]
-        matching_symbols.append(symbol_data)
+        matching_symbols.append(build_udf_symbol_payload(symbol))
     return jsonify(matching_symbols)
 
 

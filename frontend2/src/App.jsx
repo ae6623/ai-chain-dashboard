@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import TradingChart from './components/TradingChart.jsx'
 
@@ -19,6 +19,7 @@ const footerIndexes = [
 const defaultChartSymbol = 'GOOG.US'
 const defaultChartDescription = '谷歌-C'
 const defaultChartExchange = 'LONGBRIDGE'
+const watchlistQuotePollingIntervalMs = 5000
 const chartUdfBaseUrl = (import.meta.env.VITE_UDF_BASE_URL || 'http://127.0.0.1:5200').replace(/\/$/, '')
 const watchlistApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || chartUdfBaseUrl).replace(/\/$/, '')
 
@@ -93,22 +94,6 @@ function formatPercent(value) {
   return `${sign}${value.toFixed(2)}%`
 }
 
-function formatVolume(value) {
-  if (!Number.isFinite(value)) {
-    return '--'
-  }
-
-  if (value >= 100000000) {
-    return `${(value / 100000000).toFixed(2)}亿股`
-  }
-
-  if (value >= 10000) {
-    return `${(value / 10000).toFixed(2)}万股`
-  }
-
-  return `${Math.round(value)}股`
-}
-
 function formatChatTime(date = new Date()) {
   return new Intl.DateTimeFormat('zh-CN', {
     hour: '2-digit',
@@ -143,6 +128,120 @@ function createItemEditorState(overrides = {}) {
     error: '',
     ...overrides,
   }
+}
+
+function createSymbolSuggestionState(overrides = {}) {
+  return {
+    status: 'idle',
+    items: [],
+    activeIndex: -1,
+    open: false,
+    error: '',
+    ...overrides,
+  }
+}
+
+function normalizeSymbolSuggestion(item) {
+  const symbol = item?.symbol || item?.ticker || item?.name || ''
+  if (!symbol) {
+    return null
+  }
+
+  return {
+    symbol,
+    ticker: item?.ticker || symbol,
+    description: item?.description || item?.full_name || item?.name || symbol,
+    exchange: item?.exchange || item?.['exchange-listed'] || '',
+    type: item?.type || '',
+  }
+}
+
+function getSuggestionDisplayName(suggestion) {
+  const description = suggestion?.description?.trim() || ''
+  const symbol = suggestion?.symbol?.trim() || ''
+
+  if (!description || description.toUpperCase() === symbol.toUpperCase()) {
+    return ''
+  }
+
+  return description
+}
+
+function getSymbolSuggestionRank(suggestion, query) {
+  const normalizedQuery = query.trim().toUpperCase()
+  if (!normalizedQuery) {
+    return 0
+  }
+
+  const compactQuery = normalizedQuery.replace(/[^A-Z0-9]/g, '')
+  const description = getSuggestionDisplayName(suggestion).trim().toUpperCase()
+  const symbolVariants = new Set()
+
+  ;[suggestion?.symbol, suggestion?.ticker].forEach((value) => {
+    const normalizedValue = value?.trim().toUpperCase()
+    if (!normalizedValue) {
+      return
+    }
+
+    symbolVariants.add(normalizedValue)
+    symbolVariants.add(normalizedValue.split(/[.\-:/\s]/)[0])
+
+    const compactValue = normalizedValue.replace(/[^A-Z0-9]/g, '')
+    if (compactValue) {
+      symbolVariants.add(compactValue)
+    }
+  })
+
+  let rank = 0
+
+  symbolVariants.forEach((value) => {
+    if (!value) {
+      return
+    }
+
+    if (value === normalizedQuery || (compactQuery && value === compactQuery)) {
+      rank = Math.max(rank, 600)
+      return
+    }
+
+    if (/^[A-Z0-9]+[.\-:/]/.test(value) && value.startsWith(normalizedQuery)) {
+      rank = Math.max(rank, 560)
+      return
+    }
+
+    if (value.startsWith(normalizedQuery) || (compactQuery && value.startsWith(compactQuery))) {
+      rank = Math.max(rank, 520)
+      return
+    }
+
+    if (value.includes(normalizedQuery) || (compactQuery && value.includes(compactQuery))) {
+      rank = Math.max(rank, 460)
+    }
+  })
+
+  if (description.startsWith(normalizedQuery)) {
+    rank = Math.max(rank, 320)
+  } else if (description.includes(normalizedQuery)) {
+    rank = Math.max(rank, 260)
+  }
+
+  return rank
+}
+
+function rankSymbolSuggestions(items, query) {
+  return [...items].sort((left, right) => {
+    const rankDelta = getSymbolSuggestionRank(right, query) - getSymbolSuggestionRank(left, query)
+    if (rankDelta !== 0) {
+      return rankDelta
+    }
+
+    const symbolLengthDelta = left.symbol.length - right.symbol.length
+    if (symbolLengthDelta !== 0) {
+      return symbolLengthDelta
+    }
+
+    return left.symbol.localeCompare(right.symbol)
+  })
 }
 
 function buildAssistantReply(prompt, symbol) {
@@ -298,6 +397,8 @@ function App() {
   const dragStateRef = useRef(null)
   const chatViewportRef = useRef(null)
   const watchlistContextMenuRef = useRef(null)
+  const symbolInputRef = useRef(null)
+  const displayNameInputRef = useRef(null)
   const nextMessageIdRef = useRef(initialChatMessages.length + 1)
 
   const [panelWidths, setPanelWidths] = useState(defaultPanelWidths)
@@ -328,6 +429,7 @@ function App() {
     changePercent: null,
   })
   const [itemEditorState, setItemEditorState] = useState(() => createItemEditorState())
+  const [symbolSuggestionState, setSymbolSuggestionState] = useState(() => createSymbolSuggestionState())
   const [watchlistModalState, setWatchlistModalState] = useState(() => createWatchlistModalState())
 
   const activeResolution = timeframes.find((item) => item.label === activeTimeframe)?.resolution ?? '1D'
@@ -357,7 +459,10 @@ function App() {
   const chartPrice = formatLastValue(chartSnapshot.latest?.close)
   const chartMa5 = formatLastValue(chartSnapshot.ma5)
   const chartResistance = formatLastValue(chartSnapshot.latest?.high)
-  const visibleWatchlistSymbols = visibleWatchlistItems.map((item) => item.symbol).filter(Boolean)
+  const visibleWatchlistSymbols = useMemo(
+    () => [...new Set(visibleWatchlistItems.map((item) => item.symbol).filter(Boolean))],
+    [visibleWatchlistItems],
+  )
   const shellStyle = {
     '--left-panel-width': `${panelWidths.left}px`,
     '--right-panel-width': `${panelWidths.right}px`,
@@ -590,25 +695,25 @@ function App() {
         return
       }
 
-      closeWatchlistItemMenu()
+      closeWatchlistContextMenu()
     }
 
     function handleWindowKeyDown(event) {
       if (event.key === 'Escape') {
-        closeWatchlistItemMenu()
+        closeWatchlistContextMenu()
       }
     }
 
     window.addEventListener('pointerdown', handleWindowPointerDown)
     window.addEventListener('keydown', handleWindowKeyDown)
-    window.addEventListener('resize', closeWatchlistItemMenu)
-    window.addEventListener('scroll', closeWatchlistItemMenu, true)
+    window.addEventListener('resize', closeWatchlistContextMenu)
+    window.addEventListener('scroll', closeWatchlistContextMenu, true)
 
     return () => {
       window.removeEventListener('pointerdown', handleWindowPointerDown)
       window.removeEventListener('keydown', handleWindowKeyDown)
-      window.removeEventListener('resize', closeWatchlistItemMenu)
-      window.removeEventListener('scroll', closeWatchlistItemMenu, true)
+      window.removeEventListener('resize', closeWatchlistContextMenu)
+      window.removeEventListener('scroll', closeWatchlistContextMenu, true)
     }
   }, [watchlistContextMenu])
 
@@ -679,15 +784,14 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-    const symbols = [...new Set(visibleWatchlistSymbols)]
 
-    if (!symbols.length) {
+    if (!visibleWatchlistSymbols.length) {
       return undefined
     }
 
     async function loadQuoteSnapshots() {
       const nextEntries = await Promise.all(
-        symbols.map(async (symbol) => {
+        visibleWatchlistSymbols.map(async (symbol) => {
           try {
             const payload = await fetchHistoryPayload(symbol, '1D', 2)
             const points = parseHistoryPoints(payload)
@@ -720,13 +824,13 @@ function App() {
     }
 
     loadQuoteSnapshots()
-    const timerId = window.setInterval(loadQuoteSnapshots, 60000)
+    const timerId = window.setInterval(loadQuoteSnapshots, watchlistQuotePollingIntervalMs)
 
     return () => {
       cancelled = true
       window.clearInterval(timerId)
     }
-  }, [visibleWatchlistItems, visibleWatchlistSymbols])
+  }, [visibleWatchlistSymbols])
 
   useEffect(() => {
     function syncPanelWidths() {
@@ -819,6 +923,7 @@ function App() {
 
   useEffect(() => {
     if (!itemEditorState.open) {
+      setSymbolSuggestionState(createSymbolSuggestionState())
       return undefined
     }
 
@@ -834,6 +939,82 @@ function App() {
       window.removeEventListener('keydown', handleWindowKeyDown)
     }
   }, [itemEditorState.open, itemEditorState.saving])
+
+  useEffect(() => {
+    if (!itemEditorState.open) {
+      return undefined
+    }
+
+    const query = itemEditorState.symbol.trim()
+    if (!query) {
+      setSymbolSuggestionState(createSymbolSuggestionState())
+      return undefined
+    }
+
+    let cancelled = false
+    const controller = new AbortController()
+    const timerId = window.setTimeout(async () => {
+      setSymbolSuggestionState((current) => ({
+        ...current,
+        status: 'loading',
+        error: '',
+      }))
+
+      try {
+        const payload = await requestApiData(buildUrl(chartUdfBaseUrl, '/api/udf/search', { query, limit: 8 }), {
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        })
+        if (cancelled) {
+          return
+        }
+
+        const seenSymbols = new Set()
+        const items = rankSymbolSuggestions(
+          (Array.isArray(payload) ? payload : [])
+            .map(normalizeSymbolSuggestion)
+            .filter(Boolean),
+          query,
+        )
+          .filter((item) => {
+            const symbolKey = item.symbol.toUpperCase()
+            if (seenSymbols.has(symbolKey)) {
+              return false
+            }
+
+            seenSymbols.add(symbolKey)
+            return true
+          })
+          .slice(0, 8)
+
+        setSymbolSuggestionState((current) => ({
+          ...current,
+          status: 'ready',
+          items,
+          activeIndex: items.length ? clamp(current.activeIndex, 0, items.length - 1) : -1,
+          error: '',
+        }))
+      } catch (error) {
+        if (cancelled || error.name === 'AbortError') {
+          return
+        }
+
+        setSymbolSuggestionState((current) => ({
+          ...current,
+          status: 'error',
+          items: [],
+          activeIndex: -1,
+          error: error.message || '搜索失败，请稍后再试。',
+        }))
+      }
+    }, 180)
+
+    return () => {
+      cancelled = true
+      controller.abort()
+      window.clearTimeout(timerId)
+    }
+  }, [itemEditorState.open, itemEditorState.symbol])
 
   function updatePanelWidths(updater) {
     const shell = shellRef.current
@@ -892,12 +1073,12 @@ function App() {
     setPanelWidths(clampPanelWidths(shell.clientWidth, defaultPanelWidths.left, defaultPanelWidths.right))
   }
 
-  function closeWatchlistItemMenu() {
+  function closeWatchlistContextMenu() {
     setWatchlistContextMenu(null)
   }
 
   function handleWatchlistSelect(watchlistId) {
-    closeWatchlistItemMenu()
+    closeWatchlistContextMenu()
     setWatchlistState((current) => ({ ...current, activeId: watchlistId }))
   }
 
@@ -906,7 +1087,7 @@ function App() {
       return
     }
 
-    closeWatchlistItemMenu()
+    closeWatchlistContextMenu()
     setWatchlistItemsState((current) => ({
       ...current,
       selectedByWatchlistId: {
@@ -925,8 +1106,20 @@ function App() {
     event.preventDefault()
     event.stopPropagation()
     setWatchlistContextMenu({
+      type: 'item',
       item,
       watchlistId: resolvedActiveWatchlistId,
+      x: event.clientX,
+      y: event.clientY,
+    })
+  }
+
+  function openWatchlistGroupMenu(group, event) {
+    event.preventDefault()
+    event.stopPropagation()
+    setWatchlistContextMenu({
+      type: 'group',
+      group,
       x: event.clientX,
       y: event.clientY,
     })
@@ -986,6 +1179,27 @@ function App() {
     setItemEditorState(createItemEditorState({ open: true }))
   }
 
+  function applySymbolSuggestion(suggestion) {
+    const suggestedDisplayName = getSuggestionDisplayName(suggestion)
+
+    setItemEditorState((current) => ({
+      ...current,
+      symbol: suggestion.symbol,
+      displayName: current.displayName.trim() ? current.displayName : suggestedDisplayName,
+      error: '',
+    }))
+    setSymbolSuggestionState((current) => ({
+      ...current,
+      open: false,
+      activeIndex: -1,
+      error: '',
+    }))
+
+    window.requestAnimationFrame(() => {
+      displayNameInputRef.current?.focus()
+    })
+  }
+
   function closeWatchlistItemModal() {
     setItemEditorState((current) => {
       if (current.saving) {
@@ -1001,6 +1215,88 @@ function App() {
     openWatchlistItemModal(item)
   }
 
+  function handleItemEditorSymbolChange(event) {
+    const nextSymbol = event.target.value
+
+    setItemEditorState((current) => ({
+      ...current,
+      symbol: nextSymbol,
+      error: '',
+    }))
+    setSymbolSuggestionState((current) => ({
+      ...current,
+      open: Boolean(nextSymbol.trim()),
+      activeIndex: nextSymbol.trim() ? 0 : -1,
+      error: '',
+    }))
+  }
+
+  function handleSymbolInputFocus() {
+    if (!itemEditorState.symbol.trim()) {
+      return
+    }
+
+    setSymbolSuggestionState((current) => ({
+      ...current,
+      open: true,
+    }))
+  }
+
+  function handleSymbolInputBlur() {
+    setSymbolSuggestionState((current) => ({
+      ...current,
+      open: false,
+    }))
+  }
+
+  function handleSymbolInputKeyDown(event) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setSymbolSuggestionState((current) => {
+        if (!current.items.length) {
+          return { ...current, open: true }
+        }
+
+        const nextIndex = current.activeIndex >= 0 ? (current.activeIndex + 1) % current.items.length : 0
+        return { ...current, open: true, activeIndex: nextIndex }
+      })
+      return
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setSymbolSuggestionState((current) => {
+        if (!current.items.length) {
+          return { ...current, open: true }
+        }
+
+        const nextIndex = current.activeIndex > 0 ? current.activeIndex - 1 : current.items.length - 1
+        return { ...current, open: true, activeIndex: nextIndex }
+      })
+      return
+    }
+
+    if (event.key === 'Escape' && symbolSuggestionState.open) {
+      event.preventDefault()
+      event.stopPropagation()
+      setSymbolSuggestionState((current) => ({
+        ...current,
+        open: false,
+      }))
+      return
+    }
+
+    if (event.key === 'Enter' && symbolSuggestionState.open && symbolSuggestionState.activeIndex >= 0) {
+      const activeSuggestion = symbolSuggestionState.items[symbolSuggestionState.activeIndex]
+      if (!activeSuggestion) {
+        return
+      }
+
+      event.preventDefault()
+      applySymbolSuggestion(activeSuggestion)
+    }
+  }
+
   async function handleWatchlistItemDelete(item, event = null, watchlistId = resolvedActiveWatchlistId) {
     event?.stopPropagation()
 
@@ -1008,7 +1304,7 @@ function App() {
       return
     }
 
-    closeWatchlistItemMenu()
+    closeWatchlistContextMenu()
 
     try {
       await requestApiData(`${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(watchlistId)}/items/${encodeURIComponent(item.id)}`, {
@@ -1025,6 +1321,53 @@ function App() {
         ...current,
         error: error.message || '删除失败，请稍后再试。',
       }))
+    }
+  }
+
+  async function handleWatchlistDelete(group, event = null) {
+    event?.stopPropagation()
+
+    if (!group?.id) {
+      return
+    }
+
+    const groupLabel = group.isDefault ? `“${group.name}”（默认分组）` : `“${group.name}”`
+    if (!window.confirm(`确认删除分组 ${groupLabel} 吗？`)) {
+      return
+    }
+
+    closeWatchlistContextMenu()
+
+    try {
+      await requestApiData(`${watchlistApiBaseUrl}/api/v1/watchlists/${encodeURIComponent(group.id)}`, {
+        method: 'DELETE',
+      })
+
+      setWatchlistItemsState((current) => {
+        const nextItemsByWatchlistId = { ...current.byWatchlistId }
+        const nextSelectedByWatchlistId = { ...current.selectedByWatchlistId }
+
+        delete nextItemsByWatchlistId[group.id]
+        delete nextSelectedByWatchlistId[group.id]
+
+        return {
+          ...current,
+          byWatchlistId: nextItemsByWatchlistId,
+          selectedByWatchlistId: nextSelectedByWatchlistId,
+        }
+      })
+      setChartSelection((current) => (
+        current?.watchlistId === group.id ? null : current
+      ))
+
+      if (resolvedActiveWatchlistId === group.id) {
+        resetItemEditor()
+      }
+
+      await loadWatchlists(resolvedActiveWatchlistId === group.id ? null : resolvedActiveWatchlistId)
+    } catch (error) {
+      console.error('[App] Failed to delete watchlist.', error)
+      window.alert(error.message || '删除分组失败，请稍后再试。')
     }
   }
 
@@ -1154,6 +1497,12 @@ function App() {
     }
   }
 
+  const symbolSuggestionListId = 'watchlist-item-symbol-suggestions'
+  const shouldShowSymbolSuggestions = symbolSuggestionState.open && Boolean(itemEditorState.symbol.trim())
+  const activeSymbolSuggestionId = shouldShowSymbolSuggestions && symbolSuggestionState.activeIndex >= 0
+    ? `${symbolSuggestionListId}-${symbolSuggestionState.activeIndex}`
+    : undefined
+
   return (
     <>
       <main className="terminal-page">
@@ -1172,17 +1521,23 @@ function App() {
           </header>
 
           <div className="board-tabs" aria-label="分组标签" onWheel={handleWatchlistTabsWheel}>
-            {watchlistGroups.map((group) => (
-              <button
-                key={group.id}
-                type="button"
-                className={`board-tab ${group.id === resolvedActiveWatchlistId ? 'active' : ''}`}
-                onClick={() => handleWatchlistSelect(group.id)}
-              >
-                <span>{group.name}</span>
-                <span className="board-tab-count">{group.itemCount ?? '--'}</span>
-              </button>
-            ))}
+            {watchlistGroups.map((group) => {
+              const isActiveGroup = group.id === resolvedActiveWatchlistId
+              const isGroupMenuOpen = watchlistContextMenu?.type === 'group' && watchlistContextMenu.group.id === group.id
+
+              return (
+                <button
+                  key={group.id}
+                  type="button"
+                  className={`board-tab ${isActiveGroup ? 'active' : ''} ${isGroupMenuOpen ? 'menu-open' : ''}`.trim()}
+                  onClick={() => handleWatchlistSelect(group.id)}
+                  onContextMenu={(event) => openWatchlistGroupMenu(group, event)}
+                >
+                  <span>{group.name}</span>
+                  <span className="board-tab-count">{group.itemCount ?? '--'}</span>
+                </button>
+              )
+            })}
           </div>
 
           <div className="watchlist-table">
@@ -1198,7 +1553,9 @@ function App() {
                   {visibleWatchlistItems.map((item) => {
                     const quote = quoteSnapshots[item.symbol]
                     const isActive = item.id === highlightedWatchlistItemId
-                    const isMenuOpen = watchlistContextMenu?.item.id === item.id && watchlistContextMenu.watchlistId === resolvedActiveWatchlistId
+                    const isMenuOpen = watchlistContextMenu?.type === 'item'
+                      && watchlistContextMenu.item.id === item.id
+                      && watchlistContextMenu.watchlistId === resolvedActiveWatchlistId
                     const rowChange = getWatchlistRowChange(item, quote)
                     const rowTone = quote?.trend || item.trend || 'up'
 
@@ -1401,15 +1758,27 @@ function App() {
           className="watchlist-context-menu"
           style={{ left: `${watchlistContextMenu.x}px`, top: `${watchlistContextMenu.y}px` }}
           role="menu"
-          aria-label={`${watchlistContextMenu.item.symbol} 操作菜单`}
+          aria-label={watchlistContextMenu.type === 'group'
+            ? `${watchlistContextMenu.group.name} 操作菜单`
+            : `${watchlistContextMenu.item.symbol} 操作菜单`}
         >
-          <button
-            type="button"
-            className="watchlist-context-menu-item danger"
-            onClick={(event) => handleWatchlistItemDelete(watchlistContextMenu.item, event, watchlistContextMenu.watchlistId)}
-          >
-            从当前 watchlist 移除
-          </button>
+          {watchlistContextMenu.type === 'group' ? (
+            <button
+              type="button"
+              className="watchlist-context-menu-item danger"
+              onClick={(event) => handleWatchlistDelete(watchlistContextMenu.group, event)}
+            >
+              删除分组
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="watchlist-context-menu-item danger"
+              onClick={(event) => handleWatchlistItemDelete(watchlistContextMenu.item, event, watchlistContextMenu.watchlistId)}
+            >
+              从当前 watchlist 移除
+            </button>
+          )}
         </div>
       ) : null}
 
@@ -1482,19 +1851,68 @@ function App() {
                   </button>
                 </div>
 
-                <label>
-                  <span>代码</span>
-                  <input
-                    autoFocus
-                    value={itemEditorState.symbol}
-                    onChange={(event) => setItemEditorState((current) => ({ ...current, symbol: event.target.value, error: '' }))}
-                    placeholder="例如 GOOG.US"
-                  />
-                </label>
+                <div className="watchlist-symbol-field">
+                  <label>
+                    <span>代码</span>
+                    <input
+                      ref={symbolInputRef}
+                      autoFocus
+                      value={itemEditorState.symbol}
+                      onChange={handleItemEditorSymbolChange}
+                      onFocus={handleSymbolInputFocus}
+                      onBlur={handleSymbolInputBlur}
+                      onKeyDown={handleSymbolInputKeyDown}
+                      placeholder="例如 GOOG.US 或 谷歌"
+                      role="combobox"
+                      aria-autocomplete="list"
+                      aria-expanded={shouldShowSymbolSuggestions}
+                      aria-controls={shouldShowSymbolSuggestions ? symbolSuggestionListId : undefined}
+                      aria-activedescendant={activeSymbolSuggestionId}
+                    />
+                  </label>
+                  <p className="watchlist-symbol-hint">支持输入代码或名称，键盘上下可直接选中候选项。</p>
+
+                  {shouldShowSymbolSuggestions ? (
+                    <div className="watchlist-symbol-suggestions" id={symbolSuggestionListId} role="listbox" aria-label="候选代码">
+                      {symbolSuggestionState.status === 'loading' ? (
+                        <div className="watchlist-symbol-suggestion-state">正在匹配代码...</div>
+                      ) : symbolSuggestionState.error ? (
+                        <div className="watchlist-symbol-suggestion-state">{symbolSuggestionState.error}</div>
+                      ) : symbolSuggestionState.items.length ? (
+                        symbolSuggestionState.items.map((suggestion, index) => {
+                          const suggestionDisplayName = getSuggestionDisplayName(suggestion)
+                          const suggestionMeta = [suggestion.exchange, inferMarketLabel(suggestion)].filter(Boolean).join(' · ')
+
+                          return (
+                            <button
+                              key={`${suggestion.symbol}-${index}`}
+                              id={`${symbolSuggestionListId}-${index}`}
+                              type="button"
+                              className={`watchlist-symbol-suggestion ${symbolSuggestionState.activeIndex === index ? 'active' : ''}`.trim()}
+                              role="option"
+                              aria-selected={symbolSuggestionState.activeIndex === index}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => applySymbolSuggestion(suggestion)}
+                            >
+                              <div className="watchlist-symbol-suggestion-copy">
+                                <strong>{suggestion.symbol}</strong>
+                                <span title={suggestionDisplayName || '代码匹配结果'}>{suggestionDisplayName || '代码匹配结果'}</span>
+                              </div>
+                              <span className="watchlist-symbol-suggestion-meta">{suggestionMeta || '可直接加入当前 watchlist'}</span>
+                            </button>
+                          )
+                        })
+                      ) : (
+                        <div className="watchlist-symbol-suggestion-state">未找到匹配结果，可直接保存你输入的代码。</div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
 
                 <label>
                   <span>别名</span>
                   <input
+                    ref={displayNameInputRef}
                     value={itemEditorState.displayName}
                     onChange={(event) => setItemEditorState((current) => ({ ...current, displayName: event.target.value, error: '' }))}
                     placeholder="可选，例如 谷歌-C"
