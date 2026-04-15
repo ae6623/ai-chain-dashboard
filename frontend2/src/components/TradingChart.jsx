@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+import { getCustomIndicators } from './chart/customIndicators'
 
 const libraryPath = '/charting_library/'
 const libraryScriptPath = `${libraryPath}charting_library.js`
@@ -15,6 +17,60 @@ const defaultDatafeedConfig = {
   supports_search: true,
   supports_time: true,
   supports_timescale_marks: false,
+}
+function mergeBars(existingBars, incomingBars) {
+  const merged = new Map(existingBars.map((bar) => [bar.time, bar]))
+
+  incomingBars.forEach((bar) => {
+    if (Number.isFinite(bar?.time)) {
+      merged.set(bar.time, bar)
+    }
+  })
+
+  return Array.from(merged.values()).sort((left, right) => left.time - right.time)
+}
+
+
+function normalizeCrosshairTime(time) {
+  return time > 1e12 ? time : time * 1000
+}
+
+function calculateHoverMetrics(bars, hoveredTime) {
+  if (!Array.isArray(bars) || bars.length === 0 || !Number.isFinite(hoveredTime)) {
+    return null
+  }
+
+  const normalizedTime = normalizeCrosshairTime(hoveredTime)
+  const barIndex = bars.findIndex((bar) => bar.time === normalizedTime)
+  if (barIndex < 0) {
+    return null
+  }
+
+  const bar = bars[barIndex]
+  const previousBar = bars[barIndex - 1]
+  const latestClose = bars.at(-1)?.close
+  const closeVsPrev =
+    Number.isFinite(previousBar?.close) && previousBar.close !== 0
+      ? ((bar.close - previousBar.close) / previousBar.close) * 100
+      : Number.NaN
+  const openVsLatestClose =
+    Number.isFinite(latestClose) && Number.isFinite(bar?.open) && bar.open !== 0
+      ? ((latestClose - bar.open) / bar.open) * 100
+      : Number.NaN
+
+  return {
+    closeVsPrev,
+    openVsLatestClose,
+  }
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) {
+    return '--'
+  }
+
+  const prefix = value > 0 ? '+' : ''
+  return `${prefix}${value.toFixed(2)}%`
 }
 
 function loadTradingViewScript() {
@@ -159,7 +215,7 @@ function mapHistoryToBars(payload) {
     )
 }
 
-function createUdfDatafeed({ baseUrl, description = '' }) {
+function createUdfDatafeed({ baseUrl, description = '', onBarsLoaded, onBarUpdated }) {
   const subscriptions = new Map()
   let configPromise
 
@@ -227,6 +283,7 @@ function createUdfDatafeed({ baseUrl, description = '' }) {
         .then((payload) => {
           const bars = mapHistoryToBars(payload)
           const noData = payload?.s === 'no_data' || bars.length === 0
+          onBarsLoaded?.(bars)
           window.setTimeout(() => onResult(bars, { noData }), 0)
         })
         .catch((error) => {
@@ -252,6 +309,7 @@ function createUdfDatafeed({ baseUrl, description = '' }) {
           }
 
           lastBarTime = latestBar.time
+          onBarUpdated?.({ ...latestBar, time: lastBarTime })
           onTick({ ...latestBar, isBarClosed: false, time: lastBarTime })
         } catch (error) {
           console.error('[TradingChart] subscribeBars poll failed.', error)
@@ -288,17 +346,41 @@ function createUdfDatafeed({ baseUrl, description = '' }) {
 function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultUdfBaseUrl }) {
   const containerRef = useRef(null)
   const widgetRef = useRef(null)
-  const mountedRef = useRef(false)
+  const chartApiRef = useRef(null)
+  const hoveredBarTimeRef = useRef(null)
+  const barsRef = useRef([])
   const [loadError, setLoadError] = useState('')
+  const [hoverMetrics, setHoverMetrics] = useState(null)
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
-  const datafeed = useMemo(
-    () => createUdfDatafeed({ baseUrl: normalizedBaseUrl, description }),
-    [description, normalizedBaseUrl]
-  )
+  const syncHoverMetrics = useCallback(() => {
+    if (!Number.isFinite(hoveredBarTimeRef.current)) {
+      return
+    }
 
+    setHoverMetrics(calculateHoverMetrics(barsRef.current, hoveredBarTimeRef.current))
+  }, [])
+  const storeBars = useCallback((incomingBars) => {
+    barsRef.current = mergeBars(barsRef.current, incomingBars)
+    syncHoverMetrics()
+  }, [syncHoverMetrics])
+  const storeLatestBar = useCallback((incomingBar) => {
+    if (!incomingBar) {
+      return
+    }
+
+    barsRef.current = mergeBars(barsRef.current, [incomingBar])
+    syncHoverMetrics()
+  }, [syncHoverMetrics])
   useEffect(() => {
+    barsRef.current = []
+    chartApiRef.current = null
+    hoveredBarTimeRef.current = null
+    setHoverMetrics(null)
+
     let cancelled = false
     let localWidget = null
+    let crossHairSubscription = null
+    let handleCrossHairMoved = null
 
     async function mountWidget() {
       if (!containerRef.current) {
@@ -318,6 +400,13 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
           widgetRef.current = null
         }
 
+        const datafeed = createUdfDatafeed({
+          baseUrl: normalizedBaseUrl,
+          description,
+          onBarsLoaded: storeBars,
+          onBarUpdated: storeLatestBar,
+        })
+
         localWidget = new window.TradingView.widget({
           container: containerRef.current,
           autosize: true,
@@ -325,6 +414,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
           interval: normalizeResolution(interval),
           datafeed,
           library_path: libraryPath,
+          custom_indicators_getter: (PineJS) => Promise.resolve(getCustomIndicators(PineJS)),
           locale: 'zh',
           timezone: 'Etc/UTC',
           theme: 'dark',
@@ -383,6 +473,19 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
           }
 
           const chart = localWidget.activeChart()
+          chartApiRef.current = chart
+          crossHairSubscription = chart.crossHairMoved()
+          handleCrossHairMoved = ({ time }) => {
+            if (!Number.isFinite(time)) {
+              hoveredBarTimeRef.current = null
+              setHoverMetrics(null)
+              return
+            }
+
+            hoveredBarTimeRef.current = time
+            setHoverMetrics(calculateHoverMetrics(barsRef.current, time))
+          }
+          crossHairSubscription.subscribe(null, handleCrossHairMoved)
 
           try {
             await Promise.all(
@@ -402,8 +505,6 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
           } catch (error) {
             console.error('[TradingChart] Failed to mount default moving average studies.', error)
           }
-
-          mountedRef.current = true
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : 'TradingView chart failed to initialize.'
@@ -418,7 +519,12 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
     return () => {
       cancelled = true
-      mountedRef.current = false
+      chartApiRef.current = null
+      hoveredBarTimeRef.current = null
+      setHoverMetrics(null)
+      if (crossHairSubscription && handleCrossHairMoved) {
+        crossHairSubscription.unsubscribe(null, handleCrossHairMoved)
+      }
       if (localWidget) {
         localWidget.remove()
       }
@@ -426,10 +532,14 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
         widgetRef.current = null
       }
     }
-  }, [datafeed, description, interval, symbol])
+  }, [description, interval, normalizedBaseUrl, storeBars, storeLatestBar, symbol])
 
   return (
     <div className="price-chart tv-chart-shell">
+      <div className="tv-hover-metrics" aria-live="polite">
+        <span className={`tv-hover-metrics__item ${hoverMetrics?.closeVsPrev >= 0 ? 'up' : 'down'}`}>收盘较昨收 {formatPercent(hoverMetrics?.closeVsPrev)}</span>
+        <span className={`tv-hover-metrics__item ${hoverMetrics?.openVsLatestClose >= 0 ? 'up' : 'down'}`}>开盘较今收 {formatPercent(hoverMetrics?.openVsLatestClose)}</span>
+      </div>
       <div ref={containerRef} className="tv-chart-container" />
       {loadError ? (
         <div className="tv-chart-fallback">

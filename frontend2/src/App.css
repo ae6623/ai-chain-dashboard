@@ -645,9 +645,31 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
-.price-chart > div {
+.tv-chart-container {
   width: 100%;
   height: 100%;
+}
+
+.tv-hover-metrics {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(9, 13, 19, 0.82);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+
+.tv-hover-metrics__item {
+  font: 600 12px/1.4 var(--font-body);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
 .tv-chart-container iframe {
