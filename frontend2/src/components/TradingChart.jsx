@@ -38,6 +38,10 @@ function getLatestClose(bars) {
   return Number.isFinite(latestClose) ? latestClose : null
 }
 
+function normalizeCrosshairTime(time) {
+  return time > 1e12 ? time : time * 1000
+}
+
 function loadTradingViewScript() {
   if (window.TradingView?.widget) {
     return Promise.resolve(window.TradingView)
@@ -325,13 +329,14 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
   const widgetRef = useRef(null)
   const chartApiRef = useRef(null)
   const openVsLatestCloseStudyIdRef = useRef(null)
+  const hoveredBarTimeRef = useRef(null)
+  const latestCloseSnapshotRef = useRef(null)
   const barsRef = useRef([])
   const [loadError, setLoadError] = useState('')
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
-  const syncHoverLegendStudyInput = useCallback((bars = barsRef.current) => {
+  const syncHoverLegendStudyInput = useCallback((latestClose = latestCloseSnapshotRef.current) => {
     const chart = chartApiRef.current
     const studyId = openVsLatestCloseStudyIdRef.current
-    const latestClose = getLatestClose(bars)
 
     if (!chart || !studyId || latestClose === null) {
       return
@@ -359,6 +364,8 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
     barsRef.current = []
     chartApiRef.current = null
     openVsLatestCloseStudyIdRef.current = null
+    hoveredBarTimeRef.current = null
+    latestCloseSnapshotRef.current = null
 
     let cancelled = false
     let localWidget = null
@@ -496,8 +503,28 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
           }
 
           chart.crossHairMoved().subscribe(null, ({ time }) => {
-            if (cancelled || !Number.isFinite(time)) {
+            if (cancelled) {
               return
+            }
+
+            if (!Number.isFinite(time)) {
+              hoveredBarTimeRef.current = null
+              latestCloseSnapshotRef.current = null
+              return
+            }
+
+            const hoveredBarTime = normalizeCrosshairTime(time)
+            const hasHoveredBar = barsRef.current.some((bar) => bar.time === hoveredBarTime)
+
+            if (!hasHoveredBar) {
+              hoveredBarTimeRef.current = null
+              latestCloseSnapshotRef.current = null
+              return
+            }
+
+            if (hoveredBarTimeRef.current !== hoveredBarTime) {
+              hoveredBarTimeRef.current = hoveredBarTime
+              latestCloseSnapshotRef.current = getLatestClose(barsRef.current)
             }
 
             syncHoverLegendStudyInput()
@@ -518,6 +545,8 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
       cancelled = true
       chartApiRef.current = null
       openVsLatestCloseStudyIdRef.current = null
+      hoveredBarTimeRef.current = null
+      latestCloseSnapshotRef.current = null
       if (localWidget) {
         localWidget.remove()
       }
