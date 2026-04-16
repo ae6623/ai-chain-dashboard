@@ -12,7 +12,7 @@ class PolygonHistoryProvider(HistoryDataProvider):
     RESOLUTION_MAPPING = {
         "1": (1, "minute"), "5": (5, "minute"), "15": (15, "minute"),
         "30": (30, "minute"), "60": (1, "hour"), "240": (4, "hour"),
-        "1D": (1, "day"), "1W": (1, "week"), "1M": (1, "month")
+        "1D": (1, "day"), "1W": (1, "week"), "1M": (1, "month"), "12M": (12, "month")
     }
 
     def __init__(self, api_key):

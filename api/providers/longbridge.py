@@ -17,7 +17,7 @@ class LongBridgeHistoryProvider(HistoryDataProvider):
         "60": Period.Min_60, "120": Period.Min_120, "180": Period.Min_180,
         "240": Period.Min_240,
         "1D": Period.Day, "1W": Period.Week, "1M": Period.Month,
-        "3M": Period.Quarter, "1Y": Period.Year
+        "3M": Period.Quarter, "12M": Period.Year, "1Y": Period.Year
     }
 
     def __init__(self, cfg: Dict[str, Any]):
@@ -44,10 +44,13 @@ class LongBridgeHistoryProvider(HistoryDataProvider):
         return any(symbol.endswith(suffix) for suffix in supported_suffixes)
 
     def _normalize_bar_timestamp(self, bar_time: int, resolution: str) -> int:
-        if resolution not in {'1D', '1W', '1M'}:
+        if resolution not in {'1D', '1W', '1M', '12M', '1Y'}:
             return bar_time
 
         dt = datetime.fromtimestamp(bar_time, tz=timezone.utc)
+        if resolution in {'12M', '1Y'}:
+            return int(dt.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+
         return int(dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
     def get_history_data(self, symbol: str, resolution: str,

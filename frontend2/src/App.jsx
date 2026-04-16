@@ -33,6 +33,7 @@ const timeframes = [
   { label: '日K', resolution: '1D' },
   { label: '周K', resolution: '1W' },
   { label: '月K', resolution: '1M' },
+  { label: '年K', resolution: '12M' },
 ]
 
 const quickPrompts = ['总结今天走势', '给我一个交易计划', '看下支撑和压力', '这波还能追吗？']

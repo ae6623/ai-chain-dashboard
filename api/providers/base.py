@@ -44,6 +44,8 @@ class HistoryDataProvider(ABC):
             count = min(int(time_diff / 604800) + 1, 1000)
         elif resolution == '1M':
             count = min(int(time_diff / 2592000) + 1, 1000)
+        elif resolution in {'12M', '1Y'}:
+            count = min(int(time_diff / 31536000) + 1, 1000)
         else:
             count = min(int(time_diff / 86400) + 1, 1000)
         return max(count, 1)
@@ -81,5 +83,6 @@ class HistoryDataProvider(ABC):
         return {
             "1": 60, "5": 300, "15": 900, "30": 1800,
             "60": 3600, "240": 14400,
-            "1D": 86400, "1W": 604800, "1M": 2592000
+            "1D": 86400, "1W": 604800, "1M": 2592000,
+            "12M": 31536000, "1Y": 31536000
         }[resolution]

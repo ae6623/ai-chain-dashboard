@@ -417,6 +417,8 @@ def align_timestamp_to_resolution(timestamp, resolution):
             aligned_dt = dt.replace(year=dt.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
         else:
             aligned_dt = dt.replace(month=dt.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    elif resolution in {"12M", "1Y"}:
+        aligned_dt = dt.replace(year=dt.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
     else:
         return timestamp
     return int(aligned_dt.timestamp())
@@ -696,7 +698,7 @@ def delete_watchlist_item(watchlist_id, item_id):
 
 # ---------- UDF Blueprint ----------
 BASE_UDF_CONFIG = {
-    "supported_resolutions": ["1", "5", "15", "30", "60", "240", "1D", "1W", "1M"],
+    "supported_resolutions": ["1", "5", "15", "30", "60", "240", "1D", "1W", "1M", "12M"],
     "supports_group_request": False,
     "supports_marks": False,
     "supports_timescale_marks": False,
@@ -894,7 +896,7 @@ def history(vars):
         )
 
         if result.get('s') == 'ok' and result.get('t'):
-            effective_to = to_time if vars['resolution'] in {'1D', '1W', '1M'} else vars['to']
+            effective_to = to_time if vars['resolution'] in {'1D', '1W', '1M', '12M', '1Y'} else vars['to']
             result = normalize_udf_history_window(result, from_time, effective_to, vars['countback'])
 
         return jsonify(result)

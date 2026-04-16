@@ -229,7 +229,7 @@ class Symbol(db.Model):
         if self.exchange == Provider.FMP.value:
             ret['supported_resolutions'] = ['1', '5', '60', '1D']
         elif self.exchange == Provider.POLYGON.value:
-            ret['supported_resolutions'] = ['1', '5', '15', '30', '60', '240', '1D', '1W', '1M']
+            ret['supported_resolutions'] = ['1', '5', '15', '30', '60', '240', '1D', '1W', '1M', '12M']
             WS_SYMBOLE_MAP = {
                 'GL:XAUUSD': 'CAS.XAU/USD',
                 'C:XAUUSD': 'CAS.XAU/USD',

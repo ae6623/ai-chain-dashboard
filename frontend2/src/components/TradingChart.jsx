@@ -13,7 +13,7 @@ const defaultUdfBaseUrl = 'http://127.0.0.1:5200'
 const defaultTrendStudyName = 'Moving Average Triple'
 const legacyTrendStudyNames = ['Triple EMA']
 const defaultDatafeedConfig = {
-  supported_resolutions: ['1', '5', '15', '30', '60', '240', '1D', '1W', '1M'],
+  supported_resolutions: ['1', '5', '15', '30', '60', '240', '1D', '1W', '1M', '12M'],
   supports_group_request: false,
   supports_marks: false,
   supports_search: true,
@@ -92,6 +92,14 @@ function normalizeResolution(resolution) {
 
   if (value === 'M') {
     return '1M'
+  }
+
+  if (value === 'Y' || value === '1Y') {
+    return '12M'
+  }
+
+  if (value === '12M') {
+    return '12M'
   }
 
   return '1D'
