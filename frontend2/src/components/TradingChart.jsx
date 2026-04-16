@@ -338,8 +338,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
   const storeBars = useCallback((incomingBars) => {
     const nextBars = mergeBars(barsRef.current, incomingBars)
     barsRef.current = nextBars
-    syncHoverLegendStudyInput(nextBars)
-  }, [syncHoverLegendStudyInput])
+  }, [])
   const storeLatestBar = useCallback((incomingBar) => {
     if (!incomingBar) {
       return
@@ -347,8 +346,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
     const nextBars = mergeBars(barsRef.current, [incomingBar])
     barsRef.current = nextBars
-    syncHoverLegendStudyInput(nextBars)
-  }, [syncHoverLegendStudyInput])
+  }, [])
   useEffect(() => {
     barsRef.current = []
     chartApiRef.current = null
@@ -484,11 +482,18 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
             if (openVsLatestCloseStudyId) {
               openVsLatestCloseStudyIdRef.current = openVsLatestCloseStudyId
-              syncHoverLegendStudyInput()
             }
           } catch (error) {
             console.error('[TradingChart] Failed to mount chart studies.', error)
           }
+
+          chart.crossHairMoved().subscribe(null, ({ time }) => {
+            if (cancelled || !Number.isFinite(time)) {
+              return
+            }
+
+            syncHoverLegendStudyInput()
+          })
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : 'TradingView chart failed to initialize.'
