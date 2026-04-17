@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 # 确保当前目录在 sys.path 中
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from models import db, Symbol, Watchlist, WatchlistItem
+from models import db, Symbol, Watchlist, WatchlistItem, Inode, Dentry, DataStock, DataMarkdown, to_iso8601
 from form import F_str, F_int, form_validator, FormError
 from const import SymbolType, Provider
 from symbol_registry import search_longbridge_symbols, sync_longbridge_symbol
@@ -192,6 +192,26 @@ def migrate_watchlist_ids_to_integer():
     logger.info('Watchlist id migration finished: watchlists=%s items=%s', watchlist_count, item_count)
 
 
+def ensure_watchlist_item_category_column():
+    inspector = inspect(db.engine)
+    if not inspector.has_table('watchlist_item'):
+        return
+
+    columns = {column['name'] for column in inspector.get_columns('watchlist_item')}
+    if 'category' in columns:
+        return
+
+    logger.info('Adding category column to watchlist_item table')
+    with db.engine.begin() as connection:
+        connection.exec_driver_sql('ALTER TABLE watchlist_item ADD COLUMN category VARCHAR(64)')
+        existing_indexes = {index['name'] for index in inspector.get_indexes('watchlist_item')}
+        if 'idx_watchlist_item_category' not in existing_indexes:
+            connection.exec_driver_sql(
+                'CREATE INDEX IF NOT EXISTS idx_watchlist_item_category '
+                'ON watchlist_item (watchlist_id, category)'
+            )
+
+
 # ---------- Flask app ----------
 app = Flask(__name__)
 app.config.from_object('config.Config')
@@ -200,6 +220,7 @@ db.init_app(app)
 with app.app_context():
     migrate_watchlist_ids_to_integer()
     db.create_all()
+    ensure_watchlist_item_category_column()
 
 
 @app.before_request
@@ -338,6 +359,18 @@ def parse_watchlist_item_payload(payload, partial=False):
             if len(display_name) > 128:
                 raise ValueError('displayName length must be 128 characters or fewer')
             cleaned['displayName'] = display_name or None
+
+    if 'category' in payload:
+        category = payload.get('category')
+        if category is None:
+            cleaned['category'] = None
+        else:
+            if not isinstance(category, str):
+                raise ValueError('category must be a string or null')
+            category = category.strip()
+            if len(category) > 64:
+                raise ValueError('category length must be 64 characters or fewer')
+            cleaned['category'] = category or None
 
     if 'sort' in payload:
         sort = payload.get('sort')
@@ -628,6 +661,7 @@ def create_watchlist_item(watchlist_id):
         watchlist_id=watchlist.id,
         symbol=resolved_symbol,
         display_name=payload.get('displayName'),
+        category=payload.get('category'),
         sort=payload.get('sort', WatchlistItem.get_next_sort(watchlist.id)),
     )
 
@@ -664,6 +698,8 @@ def update_watchlist_item(watchlist_id, item_id):
         item.symbol = symbol_obj.symbol if symbol_obj is not None else payload['symbol']
     if 'displayName' in payload:
         item.display_name = payload['displayName']
+    if 'category' in payload:
+        item.category = payload['category']
     if 'sort' in payload:
         item.sort = payload['sort']
 
@@ -693,6 +729,434 @@ def delete_watchlist_item(watchlist_id, item_id):
     sync_watchlist_item_count(watchlist.id)
     db.session.commit()
 
+    return api_v1_success(True)
+
+
+# ---------- Portfolio (Inode Tree) ----------
+PORTFOLIO_NODE_TYPES = set(Inode.ALLOWED_TYPES)
+
+
+def parse_node_create_payload(payload):
+    if not isinstance(payload, dict):
+        raise ValueError('request body must be a JSON object')
+
+    cleaned = {}
+
+    node_type = payload.get('type')
+    if node_type not in PORTFOLIO_NODE_TYPES:
+        raise ValueError('type must be one of folder/stock/markdown')
+    cleaned['type'] = node_type
+
+    name = payload.get('name')
+    if not isinstance(name, str):
+        raise ValueError('name must be a string')
+    name = name.strip()
+    if not name:
+        raise ValueError('name cannot be blank')
+    if len(name) > 255:
+        raise ValueError('name length must be 255 characters or fewer')
+    cleaned['name'] = name
+
+    parent_id = payload.get('parentId')
+    if parent_id is not None and (not isinstance(parent_id, int) or isinstance(parent_id, bool)):
+        raise ValueError('parentId must be an integer or null')
+    cleaned['parentId'] = parent_id
+
+    if 'sort' in payload and payload['sort'] is not None:
+        sort = payload['sort']
+        if not isinstance(sort, int) or isinstance(sort, bool) or sort < 0:
+            raise ValueError('sort must be a non-negative integer')
+        cleaned['sort'] = sort
+
+    if node_type == Inode.TYPE_STOCK:
+        symbol = payload.get('symbol')
+        if not isinstance(symbol, str):
+            raise ValueError('symbol is required for stock node')
+        symbol = symbol.strip().upper()
+        if not symbol:
+            raise ValueError('symbol cannot be blank')
+        if len(symbol) > 32:
+            raise ValueError('symbol length must be 32 characters or fewer')
+        cleaned['symbol'] = symbol
+    elif node_type == Inode.TYPE_MARKDOWN:
+        content = payload.get('content', '')
+        if content is None:
+            content = ''
+        if not isinstance(content, str):
+            raise ValueError('content must be a string or null')
+        cleaned['content'] = content
+
+    return cleaned
+
+
+def parse_node_update_payload(payload):
+    if not isinstance(payload, dict):
+        raise ValueError('request body must be a JSON object')
+
+    cleaned = {}
+
+    if 'name' in payload:
+        name = payload['name']
+        if not isinstance(name, str):
+            raise ValueError('name must be a string')
+        name = name.strip()
+        if not name:
+            raise ValueError('name cannot be blank')
+        if len(name) > 255:
+            raise ValueError('name length must be 255 characters or fewer')
+        cleaned['name'] = name
+
+    if 'parentId' in payload:
+        parent_id = payload['parentId']
+        if parent_id is not None and (not isinstance(parent_id, int) or isinstance(parent_id, bool)):
+            raise ValueError('parentId must be an integer or null')
+        cleaned['parentId'] = parent_id
+
+    if 'sort' in payload:
+        sort = payload['sort']
+        if not isinstance(sort, int) or isinstance(sort, bool) or sort < 0:
+            raise ValueError('sort must be a non-negative integer')
+        cleaned['sort'] = sort
+
+    if 'symbol' in payload:
+        symbol = payload['symbol']
+        if not isinstance(symbol, str):
+            raise ValueError('symbol must be a string')
+        symbol = symbol.strip().upper()
+        if not symbol:
+            raise ValueError('symbol cannot be blank')
+        if len(symbol) > 32:
+            raise ValueError('symbol length must be 32 characters or fewer')
+        cleaned['symbol'] = symbol
+
+    if 'content' in payload:
+        content = payload['content']
+        if content is not None and not isinstance(content, str):
+            raise ValueError('content must be a string or null')
+        cleaned['content'] = content if content is not None else ''
+
+    if not cleaned:
+        raise ValueError('at least one field is required')
+
+    return cleaned
+
+
+def resolve_stock_symbol(symbol):
+    normalized = (symbol or '').strip().upper()
+    if not normalized:
+        return None, normalized
+    symbol_obj = Symbol.query.filter(db.func.upper(Symbol.symbol) == normalized).first()
+    if symbol_obj is not None:
+        return symbol_obj, symbol_obj.symbol
+    ticker_obj = Symbol.query.filter(db.func.upper(Symbol.ticker) == normalized).first()
+    if ticker_obj is not None:
+        return ticker_obj, ticker_obj.symbol
+    validated = validate_symbol(normalized)
+    if validated is not None:
+        return validated, validated.symbol
+    return None, normalized
+
+
+def build_stock_payload(symbol_string, symbol_obj=None):
+    resolved = symbol_obj
+    if resolved is None and symbol_string:
+        resolved = Symbol.query.filter_by(symbol=symbol_string).first()
+    return {
+        'symbol': symbol_string,
+        'ticker': getattr(resolved, 'ticker', symbol_string),
+        'fullName': getattr(resolved, 'full_name', symbol_string),
+        'description': getattr(resolved, 'description', symbol_string),
+        'exchange': getattr(resolved, 'exchange', ''),
+        'stockType': getattr(resolved, 'type', ''),
+    }
+
+
+def node_to_api_dict(dentry, inode, stock=None, markdown=None, include_content=True):
+    payload = {
+        'dentryId': dentry.id,
+        'inodeId': inode.id,
+        'parentId': dentry.parent_id,
+        'type': inode.type,
+        'name': dentry.name,
+        'sort': dentry.sort,
+        'createdAt': to_iso8601(dentry.created_at),
+        'updatedAt': to_iso8601(dentry.updated_at),
+    }
+    if inode.type == Inode.TYPE_STOCK:
+        stock = stock if stock is not None else inode.stock_data
+        payload.update(build_stock_payload(stock.symbol if stock else None))
+    elif inode.type == Inode.TYPE_MARKDOWN and include_content:
+        markdown = markdown if markdown is not None else inode.markdown_data
+        payload['content'] = markdown.content if markdown else ''
+    return payload
+
+
+def get_dentry_or_error(dentry_id):
+    dentry = Dentry.query.get(dentry_id)
+    if dentry is None:
+        return None, api_v1_error(404200, 'portfolio node not found')
+    return dentry, None
+
+
+def collect_subtree_inode_ids(root_inode_id):
+    """BFS 收集子树下所有 inode id（用于删除 / 循环检测）"""
+    visited = {root_inode_id}
+    queue = [root_inode_id]
+    while queue:
+        current = queue.pop(0)
+        child_rows = db.session.query(Dentry.child_id).filter(Dentry.parent_id == current).all()
+        for (child_id,) in child_rows:
+            if child_id in visited:
+                continue
+            visited.add(child_id)
+            queue.append(child_id)
+    return visited
+
+
+def validate_parent(parent_id, self_inode_id=None):
+    """返回 (parent_inode, error_response)"""
+    if parent_id is None:
+        return None, None
+    parent_inode = Inode.query.get(parent_id)
+    if parent_inode is None:
+        return None, api_v1_error(400200, 'parentId not found')
+    if self_inode_id is not None:
+        descendants = collect_subtree_inode_ids(self_inode_id)
+        if parent_id in descendants:
+            return None, api_v1_error(400201, 'cannot move node into its own descendant')
+    return parent_inode, None
+
+
+@api_v1_bp.route('/portfolios/tree', methods=['GET'])
+def get_portfolio_tree():
+    """一次拿整个森林：O(N) 扫描 + 内存拼装"""
+    dentries = Dentry.query.order_by(
+        Dentry.parent_id.asc(),
+        Dentry.sort.asc(),
+        Dentry.created_at.asc(),
+    ).all()
+    inode_ids = {d.child_id for d in dentries}
+    inodes = {i.id: i for i in Inode.query.filter(Inode.id.in_(inode_ids)).all()} if inode_ids else {}
+    stock_rows = {s.inode_id: s for s in DataStock.query.filter(DataStock.inode_id.in_(inode_ids)).all()} if inode_ids else {}
+    md_rows = {m.inode_id: m for m in DataMarkdown.query.filter(DataMarkdown.inode_id.in_(inode_ids)).all()} if inode_ids else {}
+
+    nodes_by_id = {}
+    roots = []
+    for dentry in dentries:
+        inode = inodes.get(dentry.child_id)
+        if inode is None:
+            continue
+        node = node_to_api_dict(
+            dentry, inode,
+            stock=stock_rows.get(inode.id),
+            markdown=md_rows.get(inode.id),
+            include_content=False,
+        )
+        node['children'] = []
+        nodes_by_id[dentry.id] = node
+
+    # link children under their parent dentry (match by parent inode -> dentry(s))
+    # parent_id on Dentry references inode.id. So find all dentries whose child_id == parent_id.
+    dentries_by_child_inode = {}
+    for dentry in dentries:
+        dentries_by_child_inode.setdefault(dentry.child_id, []).append(dentry.id)
+
+    for dentry in dentries:
+        node = nodes_by_id.get(dentry.id)
+        if node is None:
+            continue
+        if dentry.parent_id is None:
+            roots.append(node)
+            continue
+        parent_dentry_ids = dentries_by_child_inode.get(dentry.parent_id, [])
+        if not parent_dentry_ids:
+            roots.append(node)
+            continue
+        for parent_dentry_id in parent_dentry_ids:
+            parent_node = nodes_by_id.get(parent_dentry_id)
+            if parent_node is not None:
+                parent_node['children'].append(node if len(parent_dentry_ids) == 1 else dict(node))
+
+    return api_v1_success(roots)
+
+
+@api_v1_bp.route('/portfolios/nodes/<int:dentry_id>', methods=['GET'])
+def get_portfolio_node(dentry_id):
+    dentry, error_response = get_dentry_or_error(dentry_id)
+    if error_response is not None:
+        return error_response
+    inode = dentry.child
+    return api_v1_success(node_to_api_dict(dentry, inode))
+
+
+@api_v1_bp.route('/portfolios/nodes/<int:dentry_id>/children', methods=['GET'])
+def list_portfolio_children(dentry_id):
+    dentry, error_response = get_dentry_or_error(dentry_id)
+    if error_response is not None:
+        return error_response
+
+    children = Dentry.query.filter(Dentry.parent_id == dentry.child_id).order_by(
+        Dentry.sort.asc(), Dentry.created_at.asc()
+    ).all()
+    inode_ids = [c.child_id for c in children]
+    inodes = {i.id: i for i in Inode.query.filter(Inode.id.in_(inode_ids)).all()} if inode_ids else {}
+
+    payload = []
+    for child in children:
+        inode = inodes.get(child.child_id)
+        if inode is None:
+            continue
+        payload.append(node_to_api_dict(child, inode, include_content=False))
+    return api_v1_success(payload)
+
+
+@api_v1_bp.route('/portfolios/roots', methods=['GET'])
+def list_portfolio_roots():
+    roots = Dentry.query.filter(Dentry.parent_id.is_(None)).order_by(
+        Dentry.sort.asc(), Dentry.created_at.asc()
+    ).all()
+    inode_ids = [r.child_id for r in roots]
+    inodes = {i.id: i for i in Inode.query.filter(Inode.id.in_(inode_ids)).all()} if inode_ids else {}
+    payload = []
+    for dentry in roots:
+        inode = inodes.get(dentry.child_id)
+        if inode is None:
+            continue
+        payload.append(node_to_api_dict(dentry, inode, include_content=False))
+    return api_v1_success(payload)
+
+
+@api_v1_bp.route('/portfolios/nodes', methods=['POST'])
+def create_portfolio_node():
+    try:
+        payload = parse_node_create_payload(request.get_json(silent=True))
+    except ValueError as exc:
+        return api_v1_error(400100, str(exc))
+
+    parent_inode, error_response = validate_parent(payload['parentId'])
+    if error_response is not None:
+        return error_response
+
+    inode = Inode(type=payload['type'])
+    db.session.add(inode)
+
+    symbol_obj = None
+    try:
+        db.session.flush()
+
+        if payload['type'] == Inode.TYPE_STOCK:
+            symbol_obj, resolved_symbol = resolve_stock_symbol(payload['symbol'])
+            db.session.add(DataStock(inode_id=inode.id, symbol=resolved_symbol))
+        elif payload['type'] == Inode.TYPE_MARKDOWN:
+            db.session.add(DataMarkdown(inode_id=inode.id, content=payload.get('content', '')))
+
+        sort_value = payload.get('sort')
+        if sort_value is None:
+            sort_value = Dentry.get_next_sort(payload['parentId'])
+
+        dentry = Dentry(
+            parent_id=payload['parentId'],
+            child_id=inode.id,
+            name=payload['name'],
+            sort=sort_value,
+        )
+        db.session.add(dentry)
+        db.session.flush()
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return api_v1_error(409200, 'portfolio node conflict')
+
+    return api_v1_success(node_to_api_dict(
+        dentry, inode,
+        stock=inode.stock_data,
+        markdown=inode.markdown_data,
+    ))
+
+
+@api_v1_bp.route('/portfolios/nodes/<int:dentry_id>', methods=['PATCH'])
+def update_portfolio_node(dentry_id):
+    dentry, error_response = get_dentry_or_error(dentry_id)
+    if error_response is not None:
+        return error_response
+
+    try:
+        payload = parse_node_update_payload(request.get_json(silent=True))
+    except ValueError as exc:
+        return api_v1_error(400100, str(exc))
+
+    inode = dentry.child
+    if 'symbol' in payload and inode.type != Inode.TYPE_STOCK:
+        return api_v1_error(400202, 'symbol can only be set on stock nodes')
+    if 'content' in payload and inode.type != Inode.TYPE_MARKDOWN:
+        return api_v1_error(400203, 'content can only be set on markdown nodes')
+
+    if 'parentId' in payload and payload['parentId'] != dentry.parent_id:
+        _, error_response = validate_parent(payload['parentId'], self_inode_id=inode.id)
+        if error_response is not None:
+            return error_response
+        dentry.parent_id = payload['parentId']
+
+    if 'name' in payload:
+        dentry.name = payload['name']
+    if 'sort' in payload:
+        dentry.sort = payload['sort']
+
+    symbol_obj = None
+    if 'symbol' in payload:
+        symbol_obj, resolved_symbol = resolve_stock_symbol(payload['symbol'])
+        if inode.stock_data is None:
+            db.session.add(DataStock(inode_id=inode.id, symbol=resolved_symbol))
+        else:
+            inode.stock_data.symbol = resolved_symbol
+
+    if 'content' in payload:
+        if inode.markdown_data is None:
+            db.session.add(DataMarkdown(inode_id=inode.id, content=payload['content']))
+        else:
+            inode.markdown_data.content = payload['content']
+
+    try:
+        db.session.flush()
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return api_v1_error(409200, 'portfolio node conflict')
+
+    return api_v1_success(node_to_api_dict(
+        dentry, inode,
+        stock=inode.stock_data,
+        markdown=inode.markdown_data,
+    ))
+
+
+def delete_dentry_recursive(dentry):
+    """解挂当前 dentry；若其 inode 再无任何挂载点，则递归删除其子 dentry，最后删除该 inode。"""
+    inode_id = dentry.child_id
+    db.session.delete(dentry)
+    db.session.flush()
+
+    still_mounted = db.session.query(Dentry.id).filter(Dentry.child_id == inode_id).first()
+    if still_mounted is not None:
+        return
+
+    child_dentries = Dentry.query.filter(Dentry.parent_id == inode_id).all()
+    for child_dentry in child_dentries:
+        delete_dentry_recursive(child_dentry)
+
+    inode = Inode.query.get(inode_id)
+    if inode is not None:
+        db.session.delete(inode)
+
+
+@api_v1_bp.route('/portfolios/nodes/<int:dentry_id>', methods=['DELETE'])
+def delete_portfolio_node(dentry_id):
+    dentry, error_response = get_dentry_or_error(dentry_id)
+    if error_response is not None:
+        return error_response
+
+    delete_dentry_recursive(dentry)
+    db.session.commit()
     return api_v1_success(True)
 
 

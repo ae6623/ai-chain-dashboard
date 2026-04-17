@@ -79,6 +79,7 @@ class WatchlistItem(db.Model):
 
     symbol = db.Column(db.String(32), nullable=False)
     display_name = db.Column(db.String(128), nullable=True)
+    category = db.Column(db.String(64), nullable=True)
     sort = db.Column(db.Integer, nullable=False, default=0)
 
     watchlist = db.relationship('Watchlist', backref=db.backref('items', lazy='dynamic', cascade='all, delete-orphan'))
@@ -87,6 +88,7 @@ class WatchlistItem(db.Model):
         UniqueConstraint('watchlist_id', 'symbol', name='uq_watchlist_item_symbol'),
         Index('idx_watchlist_item_watchlist_sort', 'watchlist_id', 'sort'),
         Index('idx_watchlist_item_symbol', 'symbol'),
+        Index('idx_watchlist_item_category', 'watchlist_id', 'category'),
     )
 
     @classmethod
@@ -112,10 +114,101 @@ class WatchlistItem(db.Model):
             'description': getattr(resolved_symbol, 'description', display_name),
             'exchange': getattr(resolved_symbol, 'exchange', ''),
             'type': getattr(resolved_symbol, 'type', ''),
+            'category': self.category,
             'sort': self.sort,
             'createdAt': to_iso8601(self.created_at),
             'updatedAt': to_iso8601(self.updated_at),
         }
+
+
+class Inode(db.Model):
+    __tablename__ = 'inode'
+
+    TYPE_FOLDER = 'folder'
+    TYPE_STOCK = 'stock'
+    TYPE_MARKDOWN = 'markdown'
+    ALLOWED_TYPES = (TYPE_FOLDER, TYPE_STOCK, TYPE_MARKDOWN)
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    type = db.Column(db.String(16), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    stock_data = db.relationship(
+        'DataStock', uselist=False, backref='inode',
+        cascade='all, delete-orphan', passive_deletes=True,
+    )
+    markdown_data = db.relationship(
+        'DataMarkdown', uselist=False, backref='inode',
+        cascade='all, delete-orphan', passive_deletes=True,
+    )
+
+    __table_args__ = (
+        db.CheckConstraint("type IN ('folder', 'stock', 'markdown')", name='ck_inode_type'),
+        Index('idx_inode_type', 'type'),
+    )
+
+
+class Dentry(db.Model):
+    __tablename__ = 'dentry'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    parent_id = db.Column(
+        db.Integer, db.ForeignKey('inode.id', ondelete='CASCADE'), nullable=True
+    )
+    child_id = db.Column(
+        db.Integer, db.ForeignKey('inode.id', ondelete='CASCADE'), nullable=False
+    )
+    name = db.Column(db.String(255), nullable=False)
+    sort = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    parent = db.relationship('Inode', foreign_keys=[parent_id])
+    child = db.relationship('Inode', foreign_keys=[child_id])
+
+    __table_args__ = (
+        UniqueConstraint('parent_id', 'child_id', name='uq_dentry_parent_child'),
+        Index('idx_dentry_parent_sort', 'parent_id', 'sort'),
+        Index('idx_dentry_child', 'child_id'),
+    )
+
+    @classmethod
+    def get_next_sort(cls, parent_id):
+        max_sort = db.session.query(db.func.max(cls.sort)).filter(cls.parent_id == parent_id).scalar()
+        return 0 if max_sort is None else max_sort + 1
+
+
+class DataStock(db.Model):
+    __tablename__ = 'data_stock'
+
+    inode_id = db.Column(
+        db.Integer, db.ForeignKey('inode.id', ondelete='CASCADE'), primary_key=True
+    )
+    symbol = db.Column(db.String(32), nullable=False)
+
+    __table_args__ = (
+        Index('idx_data_stock_symbol', 'symbol'),
+    )
+
+
+class DataMarkdown(db.Model):
+    __tablename__ = 'data_markdown'
+
+    inode_id = db.Column(
+        db.Integer, db.ForeignKey('inode.id', ondelete='CASCADE'), primary_key=True
+    )
+    content = db.Column(db.Text, nullable=True)
 
 
 class Symbol(db.Model):
