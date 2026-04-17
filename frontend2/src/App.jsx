@@ -107,6 +107,14 @@ function getDefaultWatchlistId(groups) {
   return groups.find((group) => group.isDefault)?.id ?? groups[0]?.id ?? null
 }
 
+function areStringArraysEqual(left, right) {
+  if (left.length !== right.length) {
+    return false
+  }
+
+  return left.every((value, index) => value === right[index])
+}
+
 function createWatchlistModalState(groupCount = 0, overrides = {}) {
   return {
     open: false,
@@ -397,6 +405,7 @@ function App() {
   const shellRef = useRef(null)
   const dragStateRef = useRef(null)
   const chatViewportRef = useRef(null)
+  const watchlistRowsRef = useRef(null)
   const watchlistContextMenuRef = useRef(null)
   const symbolInputRef = useRef(null)
   const displayNameInputRef = useRef(null)
@@ -421,6 +430,7 @@ function App() {
   const [chartSelection, setChartSelection] = useState(null)
   const [watchlistContextMenu, setWatchlistContextMenu] = useState(null)
   const [quoteSnapshots, setQuoteSnapshots] = useState({})
+  const [pollingWatchlistSymbols, setPollingWatchlistSymbols] = useState([])
   const [chartSnapshot, setChartSnapshot] = useState({
     status: 'loading',
     latest: null,
@@ -460,7 +470,7 @@ function App() {
   const chartPrice = formatLastValue(chartSnapshot.latest?.close)
   const chartMa5 = formatLastValue(chartSnapshot.ma5)
   const chartResistance = formatLastValue(chartSnapshot.latest?.high)
-  const visibleWatchlistSymbols = useMemo(
+  const activeWatchlistSymbols = useMemo(
     () => [...new Set(visibleWatchlistItems.map((item) => item.symbol).filter(Boolean))],
     [visibleWatchlistItems],
   )
@@ -784,15 +794,68 @@ function App() {
   }, [activeSymbol])
 
   useEffect(() => {
+    const container = watchlistRowsRef.current
+
+    if (!container || !activeWatchlistSymbols.length) {
+      setPollingWatchlistSymbols([])
+      return undefined
+    }
+
+    let frameId = 0
+
+    function syncPollingWatchlistSymbols() {
+      frameId = 0
+      const containerRect = container.getBoundingClientRect()
+      const nextSymbols = [...new Set(
+        Array.from(container.querySelectorAll('[data-watchlist-symbol]'))
+          .filter((row) => {
+            const rect = row.getBoundingClientRect()
+            return rect.bottom > containerRect.top && rect.top < containerRect.bottom
+          })
+          .map((row) => row.dataset.watchlistSymbol)
+          .filter(Boolean)
+      )]
+
+      setPollingWatchlistSymbols((current) => {
+        if (areStringArraysEqual(current, nextSymbols)) {
+          return current
+        }
+
+        return nextSymbols
+      })
+    }
+
+    function scheduleSync() {
+      if (frameId) {
+        return
+      }
+
+      frameId = window.requestAnimationFrame(syncPollingWatchlistSymbols)
+    }
+
+    syncPollingWatchlistSymbols()
+    container.addEventListener('scroll', scheduleSync, { passive: true })
+    window.addEventListener('resize', scheduleSync)
+
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId)
+      }
+      container.removeEventListener('scroll', scheduleSync)
+      window.removeEventListener('resize', scheduleSync)
+    }
+  }, [activeWatchlistSymbols, visibleWatchlistItems])
+
+  useEffect(() => {
     let cancelled = false
 
-    if (!visibleWatchlistSymbols.length) {
+    if (!pollingWatchlistSymbols.length) {
       return undefined
     }
 
     async function loadQuoteSnapshots() {
       const nextEntries = await Promise.all(
-        visibleWatchlistSymbols.map(async (symbol) => {
+        pollingWatchlistSymbols.map(async (symbol) => {
           try {
             const payload = await fetchHistoryPayload(symbol, '1D', 2)
             const points = parseHistoryPoints(payload)
@@ -831,7 +894,7 @@ function App() {
       cancelled = true
       window.clearInterval(timerId)
     }
-  }, [visibleWatchlistSymbols])
+  }, [pollingWatchlistSymbols])
 
   useEffect(() => {
     function syncPanelWidths() {
@@ -1548,7 +1611,7 @@ function App() {
               <span>涨跌幅</span>
             </div>
 
-            <div className="watchlist-rows">
+            <div ref={watchlistRowsRef} className="watchlist-rows">
               {visibleWatchlistItems.length ? (
                 <>
                   {visibleWatchlistItems.map((item) => {
@@ -1564,6 +1627,7 @@ function App() {
                       <article
                         key={item.id}
                         className={`watchlist-row ${isActive ? 'active' : ''} ${isMenuOpen ? 'menu-open' : ''}`.trim()}
+                        data-watchlist-symbol={item.symbol}
                         onClick={() => handleWatchlistItemSelect(item.id)}
                         onContextMenu={(event) => openWatchlistItemMenu(item, event)}
                       >
