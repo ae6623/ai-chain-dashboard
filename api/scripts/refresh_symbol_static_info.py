@@ -109,17 +109,18 @@ def refresh_one(symbol: str, force: bool) -> tuple:
     """刷新一个 symbol，返回 (symbol, ok, has_fundamentals, duration)"""
     start = time.time()
     try:
-        if force:
-            record = Symbol.query.filter_by(symbol=symbol).first()
-            if record:
-                invalidate_cache(record)
+        with app.app_context():
+            if force:
+                record = Symbol.query.filter_by(symbol=symbol).first()
+                if record:
+                    invalidate_cache(record)
 
-        data = get_static_info(symbol)
-        duration = time.time() - start
-        if not data:
-            return (symbol, False, False, duration)
-        has_fundamentals = bool(data.get('fundamentals'))
-        return (symbol, True, has_fundamentals, duration)
+            data = get_static_info(symbol)
+            duration = time.time() - start
+            if not data:
+                return (symbol, False, False, duration)
+            has_fundamentals = bool(data.get('fundamentals'))
+            return (symbol, True, has_fundamentals, duration)
     except Exception as exc:
         duration = time.time() - start
         logger.warning('[refresh_one] symbol=%s error=%s', symbol, exc)
