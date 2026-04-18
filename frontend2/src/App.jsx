@@ -36,25 +36,6 @@ const timeframes = [
   { label: '年K', resolution: '12M' },
 ]
 
-const quickPrompts = ['总结今天走势', '给我一个交易计划', '看下支撑和压力', '这波还能追吗？']
-
-const initialChatMessages = [
-  {
-    id: 'm1',
-    role: 'assistant',
-    title: 'AI 盘面助理',
-    content: '我已经接入当前图表的 UDF 日K、均线和最近价格数据。你可以直接问我走势总结、关键位、仓位建议或风险提示。',
-    time: '14:05',
-  },
-  {
-    id: 'm2',
-    role: 'assistant',
-    title: '即时观察',
-    content: '左侧自选树支持文件夹 / 股票 / 笔记三种节点，点击股票节点即可在中央加载 K 线图；右键节点可新增子级、重命名或删除。',
-    time: '14:06',
-  },
-]
-
 function calculateMovingAverage(values, windowSize) {
   if (!values.length) {
     return null
@@ -90,14 +71,6 @@ function formatPercent(value) {
   }
   const sign = value > 0 ? '+' : ''
   return `${sign}${value.toFixed(2)}%`
-}
-
-function formatChatTime(date = new Date()) {
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
 }
 
 function getTrendClass(value) {
@@ -139,21 +112,28 @@ async function fetchHistoryPayload(symbol, resolution = '1D', countback = 20) {
   return payload
 }
 
-function buildAssistantReply(prompt, symbol) {
-  const text = prompt.trim().toLowerCase()
-  if (text.includes('支撑') || text.includes('压力') || text.includes('关键位')) {
-    return `${symbol} 先看最近一根日K低点和 MA5 一带的动态承接，上方则观察最近 swing high 附近的压力。更稳妥的做法，是结合放量突破或回踩企稳来确认。`
-  }
-  if (text.includes('计划') || text.includes('策略') || text.includes('交易')) {
-    return `${symbol} 如果偏顺势，就等突破确认后再分批跟；如果更看重盈亏比，优先等回踩均线或前高转支撑的确认，再决定仓位和止损。`
-  }
-  if (text.includes('追') || text.includes('买吗') || text.includes('上车')) {
-    return `${symbol} 当前位置更适合先分清是做突破还是做回踩，不一定是最舒服的追价位置。等量价确认后再动手，通常会比直接追更从容。`
-  }
-  if (text.includes('风险') || text.includes('回撤') || text.includes('止损')) {
-    return `${symbol} 的主要风险在于临近阶段高点时量价配合转弱，一旦重新跌回短期均线下方，短线节奏就可能从强整理转成回撤，需要重新评估仓位和止损。`
-  }
-  return `从当前图形看，${symbol} 更像趋势延续中的整理段，结构并没有明显走坏，但离阶段压力也不远。更适合先明确自己做突破还是做回踩，再决定进出节奏。`
+function stripHtml(str) {
+  if (typeof str !== 'string') return '--'
+  return str.replace(/<[^>]*>/g, '')
+}
+
+function formatLargeNumber(value) {
+  if (value == null || !Number.isFinite(value)) return '--'
+  const abs = Math.abs(value)
+  if (abs >= 1e12) return (value / 1e12).toFixed(2) + ' 万亿'
+  if (abs >= 1e8) return (value / 1e8).toFixed(2) + ' 亿'
+  if (abs >= 1e4) return (value / 1e4).toFixed(2) + ' 万'
+  return String(value)
+}
+
+function formatStatValue(value) {
+  if (value == null) return '--'
+  const num = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(num)) return String(value)
+  const abs = Math.abs(num)
+  if (abs >= 100) return num.toFixed(2)
+  if (abs >= 1) return num.toFixed(3)
+  return num.toFixed(4)
 }
 
 function clamp(value, min, max) {
@@ -176,12 +156,8 @@ function clampPanelWidths(containerWidth, leftWidth, rightWidth) {
 function App() {
   const shellRef = useRef(null)
   const dragStateRef = useRef(null)
-  const chatViewportRef = useRef(null)
-  const nextMessageIdRef = useRef(initialChatMessages.length + 1)
 
   const [panelWidths, setPanelWidths] = useState(defaultPanelWidths)
-  const [chatMessages, setChatMessages] = useState(initialChatMessages)
-  const [chatDraft, setChatDraft] = useState('')
   const [activeTimeframe, setActiveTimeframe] = useState('日K')
   const [selectedStock, setSelectedStock] = useState(null)
   const [chartSnapshot, setChartSnapshot] = useState({
@@ -192,6 +168,7 @@ function App() {
     ma13: null,
     changePercent: null,
   })
+  const [staticInfo, setStaticInfo] = useState(null)
 
   const activeResolution = timeframes.find((item) => item.label === activeTimeframe)?.resolution ?? '1D'
   const activeSymbol = selectedStock?.symbol || defaultChartSymbol
@@ -200,9 +177,6 @@ function App() {
   const activeExchange = selectedStock?.exchange || defaultChartExchange
   const activeMarketLabel = inferMarketLabel(selectedStock || {})
   const chartChangeTone = getTrendClass(chartSnapshot.changePercent)
-  const chartPrice = formatLastValue(chartSnapshot.latest?.close)
-  const chartMa5 = formatLastValue(chartSnapshot.ma5)
-  const chartResistance = formatLastValue(chartSnapshot.latest?.high)
 
   const shellStyle = {
     '--left-panel-width': `${panelWidths.left}px`,
@@ -254,6 +228,27 @@ function App() {
   }, [activeSymbol])
 
   useEffect(() => {
+    let cancelled = false
+    setStaticInfo(null)
+
+    async function loadStaticInfo() {
+      try {
+        const response = await fetch(`${portfolioApiBaseUrl}/api/v1/symbols/${encodeURIComponent(activeSymbol)}/static-info`)
+        if (!response.ok) return
+        const json = await response.json()
+        if (!cancelled && json.code === 0 && json.data) {
+          setStaticInfo(json.data)
+        }
+      } catch {
+        /* silent */
+      }
+    }
+
+    loadStaticInfo()
+    return () => { cancelled = true }
+  }, [activeSymbol])
+
+  useEffect(() => {
     function syncPanelWidths() {
       const shell = shellRef.current
       if (!shell || window.innerWidth <= desktopBreakpoint) {
@@ -300,12 +295,6 @@ function App() {
       document.body.classList.remove('is-resizing-columns')
     }
   }, [])
-
-  useEffect(() => {
-    const viewport = chatViewportRef.current
-    if (!viewport) return
-    viewport.scrollTop = viewport.scrollHeight
-  }, [chatMessages])
 
   function updatePanelWidths(updater) {
     const shell = shellRef.current
@@ -358,39 +347,6 @@ function App() {
       exchange: node.exchange || '',
       stockType: node.stockType || node.type || '',
     })
-  }
-
-  function submitChatMessage(message) {
-    const text = message.trim()
-    if (!text) return
-    const userMessage = {
-      id: `m${nextMessageIdRef.current++}`,
-      role: 'user',
-      title: '你',
-      content: text,
-      time: formatChatTime(),
-    }
-    const assistantMessage = {
-      id: `m${nextMessageIdRef.current++}`,
-      role: 'assistant',
-      title: 'AI 盘面助理',
-      content: buildAssistantReply(text, activeSymbol),
-      time: formatChatTime(),
-    }
-    setChatMessages((current) => [...current, userMessage, assistantMessage])
-    setChatDraft('')
-  }
-
-  function handleChatSubmit(event) {
-    event.preventDefault()
-    submitChatMessage(chatDraft)
-  }
-
-  function handleComposerKeyDown(event) {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      submitChatMessage(chatDraft)
-    }
   }
 
   return (
@@ -469,61 +425,140 @@ function App() {
         />
 
         <aside className="detail-panel">
-          <section className="ai-panel panel-card">
-            <header className="ai-panel-header">
-              <div>
-                <p className="panel-kicker">AI Copilot</p>
-                <h2>盘面对话框</h2>
-                <span className="ai-panel-status">已接入 {activeSymbol} UDF 日K、均线与价格上下文</span>
+          {staticInfo && (
+            <section className="company-info-card panel-card">
+              <header className="company-info-header">
+                <div>
+                  <p className="panel-kicker">公司概况</p>
+                  <h2>{staticInfo.name_cn || staticInfo.name_en || activeSymbol}</h2>
+                  <span className="company-info-sub">{staticInfo.name_en}{staticInfo.exchange ? ` · ${staticInfo.exchange}` : ''}</span>
+                </div>
+                <span className="market-badge">{staticInfo.currency || '--'}</span>
+              </header>
+              <div className="company-info-grid">
+                <div className="company-info-item">
+                  <span className="company-info-label">总股本</span>
+                  <span className="company-info-value">{formatLargeNumber(staticInfo.total_shares)}</span>
+                </div>
+                <div className="company-info-item">
+                  <span className="company-info-label">流通股</span>
+                  <span className="company-info-value">{formatLargeNumber(staticInfo.circulating_shares)}</span>
+                </div>
+                <div className="company-info-item">
+                  <span className="company-info-label">每手</span>
+                  <span className="company-info-value">{staticInfo.lot_size ?? '--'}</span>
+                </div>
+                <div className="company-info-item">
+                  <span className="company-info-label">EPS</span>
+                  <span className="company-info-value">{formatStatValue(staticInfo.eps)}</span>
+                </div>
+                <div className="company-info-item">
+                  <span className="company-info-label">EPS (TTM)</span>
+                  <span className="company-info-value">{formatStatValue(staticInfo.eps_ttm)}</span>
+                </div>
+                <div className="company-info-item">
+                  <span className="company-info-label">每股净资产</span>
+                  <span className="company-info-value">{formatStatValue(staticInfo.bps)}</span>
+                </div>
+                <div className="company-info-item">
+                  <span className="company-info-label">股息率</span>
+                  <span className="company-info-value">{staticInfo.dividend_yield != null ? staticInfo.dividend_yield + '%' : '--'}</span>
+                </div>
+
               </div>
-              <button type="button" className="market-badge ai-live-badge">
-                在线
-              </button>
-            </header>
 
-            <div className="ai-context-strip">
-              <span>{activeSymbol}</span>
-              <strong>{chartPrice}</strong>
-              <span>MA5 {chartMa5}</span>
-              <span>压力 {chartResistance}</span>
-            </div>
+              {staticInfo.fundamentals && (
+                <>
+                  {staticInfo.fundamentals.company?.profile && (
+                    <div className="company-info-section">
+                      <span className="company-info-label">公司简介</span>
+                      <p className="company-info-value" title={staticInfo.fundamentals.company.profile}>
+                        {staticInfo.fundamentals.company.profile}
+                      </p>
+                      <small className="company-info-sub">
+                        {[
+                          staticInfo.fundamentals.company?.manager && `CEO: ${staticInfo.fundamentals.company.manager}`,
+                          staticInfo.fundamentals.company?.employees && `员工: ${Number(staticInfo.fundamentals.company.employees).toLocaleString()}`,
+                          staticInfo.fundamentals.company?.founded && `成立: ${staticInfo.fundamentals.company.founded}`,
+                          staticInfo.fundamentals.company?.website && staticInfo.fundamentals.company.website,
+                        ].filter(Boolean).join(' · ')}
+                      </small>
+                    </div>
+                  )}
 
-            <div className="ai-quick-prompts" aria-label="快捷提问">
-              {quickPrompts.map((prompt) => (
-                <button key={prompt} type="button" className="ai-prompt-chip" onClick={() => submitChatMessage(prompt)}>
-                  {prompt}
-                </button>
-              ))}
-            </div>
+                  {staticInfo.fundamentals.valuation?.pe_desc && (
+                    <>
+                      <div className="company-info-subheader">PE 估值</div>
+                      <div
+                        className="company-info-pe"
+                        dangerouslySetInnerHTML={{ __html: staticInfo.fundamentals.valuation.pe_desc }}
+                      />
+                    </>
+                  )}
 
-            <div ref={chatViewportRef} className="ai-message-list">
-              {chatMessages.map((message) => (
-                <article key={message.id} className={`ai-message ${message.role}`}>
-                  <div className="ai-message-meta">
-                    <span>{message.title}</span>
-                    <time>{message.time}</time>
+                  <div className="company-info-subheader">机构评级 & 预测</div>
+                  <div className="company-info-grid">
+                    {staticInfo.fundamentals.institution_rating && (
+                      <>
+                        <div className="company-info-item">
+                          <span className="company-info-label">买/持/卖</span>
+                          <span className="company-info-value">
+                            {`${staticInfo.fundamentals.institution_rating.buy ?? '-'}/${staticInfo.fundamentals.institution_rating.hold ?? '-'}/${staticInfo.fundamentals.institution_rating.sell ?? '-'}`}
+                          </span>
+                        </div>
+                        <div className="company-info-item">
+                          <span className="company-info-label">目标价</span>
+                          <span className="company-info-value">
+                            {formatStatValue(staticInfo.fundamentals.institution_rating.target_prev_close)}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {staticInfo.fundamentals.consensus?.eps_estimate && (
+                      <div className="company-info-item">
+                        <span className="company-info-label">预期 EPS</span>
+                        <span className="company-info-value">{formatStatValue(staticInfo.fundamentals.consensus.eps_estimate)}</span>
+                      </div>
+                    )}
+                    {staticInfo.fundamentals.consensus?.revenue_estimate && (
+                      <div className="company-info-item">
+                        <span className="company-info-label">预期营收</span>
+                        <span className="company-info-value">{formatLargeNumber(Number(staticInfo.fundamentals.consensus.revenue_estimate))}</span>
+                      </div>
+                    )}
+                    {staticInfo.fundamentals.consensus?.net_income_estimate && (
+                      <div className="company-info-item">
+                        <span className="company-info-label">预期净利润</span>
+                        <span className="company-info-value">{formatLargeNumber(Number(staticInfo.fundamentals.consensus.net_income_estimate))}</span>
+                      </div>
+                    )}
+                    {staticInfo.fundamentals.forecast_eps?.mean && (
+                      <div className="company-info-item">
+                        <span className="company-info-label">预测 EPS</span>
+                        <span className="company-info-value">
+                          {`${formatStatValue(staticInfo.fundamentals.forecast_eps.lowest)}~${formatStatValue(staticInfo.fundamentals.forecast_eps.highest)}`}
+                        </span>
+                      </div>
+                    )}
+                    {staticInfo.fundamentals.dividend?.desc && (
+                      <div className="company-info-item">
+                        <span className="company-info-label">派息</span>
+                        <span className="company-info-value" title={staticInfo.fundamentals.dividend.desc}>
+                          {staticInfo.fundamentals.dividend.desc}
+                        </span>
+                      </div>
+                    )}
+                    {staticInfo.fundamentals.dividend?.ex_date && (
+                      <div className="company-info-item">
+                        <span className="company-info-label">除息日</span>
+                        <span className="company-info-value">{staticInfo.fundamentals.dividend.ex_date}</span>
+                      </div>
+                    )}
                   </div>
-                  <div className="ai-message-bubble">{message.content}</div>
-                </article>
-              ))}
-            </div>
-
-            <form className="ai-composer" onSubmit={handleChatSubmit}>
-              <textarea
-                value={chatDraft}
-                onChange={(event) => setChatDraft(event.target.value)}
-                onKeyDown={handleComposerKeyDown}
-                rows={4}
-                placeholder={`直接问：${activeSymbol} 支撑在哪、还能不能追、给个交易计划...`}
-              />
-              <div className="ai-composer-footer">
-                <span>Enter 发送，Shift + Enter 换行</span>
-                <button type="submit" className="ai-send-button" disabled={!chatDraft.trim()}>
-                  发送
-                </button>
-              </div>
-            </form>
-          </section>
+                </>
+              )}
+            </section>
+          )}
         </aside>
       </section>
 

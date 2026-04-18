@@ -549,7 +549,48 @@ Portfolios 模块借鉴 Unix VFS 的 **inode + dentry** 抽象，用一棵树表
     "dividend_yield": "0.85",
     "stock_derivatives": [1],
     "board": "USMain",
-    "cached_at": 1713451200.123
+    "cached_at": 1713451200.123,
+    "fundamentals": {
+      "source": "longbridge_cli",
+      "company": {
+        "profile": "苹果公司设计、制造和销售智能手机...",
+        "website": "www.apple.com",
+        "founded": "1976",
+        "employees": "166000",
+        "manager": "Timothy D. Cook",
+        "market": "纳斯达克全球精选市场",
+        "icon": "https://assets.lbkrs.com/ticker/ST/US/AAPL.png"
+      },
+      "valuation": {
+        "pe_desc": "当前市盈率 33.68，处于合理区间，行业排名 16/43"
+      },
+      "institution_rating": {
+        "buy": 31,
+        "hold": 14,
+        "sell": 2,
+        "total": 49,
+        "target_highest": "350.000",
+        "target_lowest": "205.000",
+        "target_prev_close": "270.23"
+      },
+      "dividend": {
+        "ex_date": "2026.02.09",
+        "payment_date": "2026.02.12",
+        "desc": "每股派息 0.26 USD"
+      },
+      "consensus": {
+        "period": "qf",
+        "revenue_estimate": "110746120930.0000",
+        "net_income_estimate": "28532143570.0000",
+        "eps_estimate": "1.8700"
+      },
+      "forecast_eps": {
+        "mean": "8.513",
+        "highest": "9.41",
+        "lowest": "7.863"
+      },
+      "cached_at": 1713451200.123
+    }
   }
 }
 ```
@@ -575,6 +616,40 @@ Portfolios 模块借鉴 Unix VFS 的 **inode + dentry** 抽象，用一棵树表
 | stock_derivatives | integer[] | 支持的衍生品类型（`1` = 期权，`2` = 窝轮） |
 | board | string | 所属板块 |
 | cached_at | number | 缓存时间戳（Unix epoch 秒） |
+| fundamentals | object / null | 基本面数据（来源长桥 CLI，24h 缓存，best-effort） |
+| ∟ source | string | 数据来源标识 |
+| ∟ company | object | 公司概况 |
+| ∟∟ profile | string / null | 公司简介 |
+| ∟∟ website | string / null | 公司官网 |
+| ∟∟ founded | string / null | 成立年份 |
+| ∟∟ employees | string / null | 员工人数 |
+| ∟∟ manager | string / null | 管理层负责人 |
+| ∟∟ market | string / null | 所在市场 |
+| ∟∟ icon | string / null | 公司 Logo URL |
+| ∟ valuation | object | 估值摘要 |
+| ∟∟ pe_desc | string / null | 市盈率描述（含行业对比） |
+| ∟ institution_rating | object | 机构评级 |
+| ∟∟ buy | integer / null | 买入评级数 |
+| ∟∟ hold | integer / null | 持有评级数 |
+| ∟∟ sell | integer / null | 卖出评级数 |
+| ∟∟ total | integer / null | 评级总数 |
+| ∟∟ target_highest | string / null | 最高目标价 |
+| ∟∟ target_lowest | string / null | 最低目标价 |
+| ∟∟ target_prev_close | string / null | 前收盘价 |
+| ∟ dividend | object | 最近一次派息 |
+| ∟∟ ex_date | string / null | 除息日 |
+| ∟∟ payment_date | string / null | 派息日 |
+| ∟∟ desc | string / null | 派息说明 |
+| ∟ consensus | object | 一致预期 |
+| ∟∟ period | string / null | 预期周期 |
+| ∟∟ revenue_estimate | string / null | 预期营收 |
+| ∟∟ net_income_estimate | string / null | 预期净利润 |
+| ∟∟ eps_estimate | string / null | 预期每股收益 |
+| ∟ forecast_eps | object | EPS 预测 |
+| ∟∟ mean | string / null | 平均预测 EPS |
+| ∟∟ highest | string / null | 最高预测 EPS |
+| ∟∟ lowest | string / null | 最低预测 EPS |
+| ∟ cached_at | number | 基本面数据缓存时间戳 |
 
 ### 错误码
 
