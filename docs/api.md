@@ -510,6 +510,80 @@ Portfolios 模块借鉴 Unix VFS 的 **inode + dentry** 抽象，用一棵树表
   - 无分类则直接挂在 watchlist folder 下。
 - Watchlist 及 WatchlistItem 表**不删**，继续保留以便回滚；新写入请走 Portfolios 接口。
 
+---
+
+# Symbols API
+
+## S1. 获取证券基本信息
+
+### `GET /symbols/{symbol}/static-info`
+
+根据股票代码获取公司基本信息。数据来源于长桥 OpenAPI，首次请求会从长桥拉取并缓存到 `symbol` 表的 `static_info` 字段（JSON），后续请求优先读取缓存，缓存有效期 24 小时。
+
+### Path 参数
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| symbol | string | 是 | 股票代码，格式 `ticker.region`，如 `AAPL.US`、`700.HK`、`600519.SH` |
+
+### 响应示例
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "symbol": "AAPL.US",
+    "name_cn": "苹果",
+    "name_en": "Apple Inc.",
+    "name_hk": "",
+    "exchange": "NASD",
+    "currency": "USD",
+    "lot_size": 1,
+    "total_shares": 1631944100,
+    "circulating_shares": 16302661350,
+    "hk_shares": null,
+    "eps": "5.669",
+    "eps_ttm": "6.0771",
+    "bps": "4.40197",
+    "dividend_yield": "0.85",
+    "stock_derivatives": [1],
+    "board": "USMain",
+    "cached_at": 1713451200.123
+  }
+}
+```
+
+### 响应字段说明
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| symbol | string | 证券代码 |
+| name_cn | string | 中文简体名称 |
+| name_en | string | 英文名称 |
+| name_hk | string | 中文繁体名称 |
+| exchange | string | 所属交易所 |
+| currency | string | 交易币种（`CNY` / `USD` / `HKD` / `SGD`） |
+| lot_size | integer | 每手股数 |
+| total_shares | integer | 总股本 |
+| circulating_shares | integer | 流通股本 |
+| hk_shares | integer / null | 港股股本（仅港股） |
+| eps | string / null | 每股收益 |
+| eps_ttm | string / null | 每股收益（TTM） |
+| bps | string / null | 每股净资产 |
+| dividend_yield | string / null | 股息率 |
+| stock_derivatives | integer[] | 支持的衍生品类型（`1` = 期权，`2` = 窝轮） |
+| board | string | 所属板块 |
+| cached_at | number | 缓存时间戳（Unix epoch 秒） |
+
+### 错误码
+
+| code | 含义 |
+| --- | --- |
+| 404100 | symbol 不存在或无法获取基本信息 |
+
+---
+
 ## 旧 Watchlists 接口后续扩展
 
 如需再给旧接口加股票子资源（不推荐），可在此文档基础上追加：

@@ -265,3 +265,68 @@ def sync_longbridge_symbol(symbol: str) -> Optional[Symbol]:
         db.session.rollback()
         logger.warning('[symbol_sync_failed] provider=%s symbol=%s error=%s', Provider.LONGBRIDGE.value, normalized, exc)
         return None
+
+
+STATIC_INFO_CACHE_TTL_SECONDS = 24 * 60 * 60
+
+
+def _static_info_to_dict(info) -> dict:
+    return {
+        'symbol': getattr(info, 'symbol', ''),
+        'name_cn': getattr(info, 'name_cn', ''),
+        'name_en': getattr(info, 'name_en', ''),
+        'name_hk': getattr(info, 'name_hk', ''),
+        'exchange': getattr(info, 'exchange', ''),
+        'currency': getattr(info, 'currency', ''),
+        'lot_size': getattr(info, 'lot_size', None),
+        'total_shares': getattr(info, 'total_shares', None),
+        'circulating_shares': getattr(info, 'circulating_shares', None),
+        'hk_shares': getattr(info, 'hk_shares', None),
+        'eps': getattr(info, 'eps', None),
+        'eps_ttm': getattr(info, 'eps_ttm', None),
+        'bps': getattr(info, 'bps', None),
+        'dividend_yield': getattr(info, 'dividend_yield', None),
+        'stock_derivatives': getattr(info, 'stock_derivatives', []),
+        'board': getattr(info, 'board', ''),
+        'cached_at': time.time(),
+    }
+
+
+def _is_static_info_fresh(static_info: Optional[dict]) -> bool:
+    if not static_info:
+        return False
+    cached_at = static_info.get('cached_at')
+    if not cached_at:
+        return False
+    return (time.time() - cached_at) < STATIC_INFO_CACHE_TTL_SECONDS
+
+
+def get_static_info(symbol: str) -> Optional[dict]:
+    normalized = (symbol or '').strip().upper()
+    if not normalized:
+        return None
+
+    record = Symbol.query.filter_by(symbol=normalized).first()
+    if record is None:
+        record = sync_longbridge_symbol(normalized)
+    if record is None:
+        return None
+
+    if _is_static_info_fresh(record.static_info):
+        return record.static_info
+
+    if not is_longbridge_symbol(normalized):
+        return record.static_info
+
+    try:
+        infos = _get_longbridge_ctx().static_info([normalized])
+        if not infos:
+            return record.static_info
+        data = _static_info_to_dict(infos[0])
+        record.static_info = data
+        db.session.commit()
+        return data
+    except Exception as exc:
+        db.session.rollback()
+        logger.warning('[static_info_fetch_failed] symbol=%s error=%s', normalized, exc)
+        return record.static_info

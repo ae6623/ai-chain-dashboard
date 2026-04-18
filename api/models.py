@@ -226,6 +226,7 @@ class Symbol(db.Model):
     exchange = db.Column(db.String(32), nullable=False)
     type = db.Column(db.String(16), nullable=False)
     is_visible = db.Column(db.Boolean, default=True, nullable=False)
+    static_info = db.Column(db.JSON, nullable=True)
 
     __table_args__ = (
         UniqueConstraint('symbol', name='uq_symbol_symbol'),

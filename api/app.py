@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import db, Symbol, Watchlist, WatchlistItem, Inode, Dentry, DataStock, DataMarkdown, to_iso8601
 from form import F_str, F_int, form_validator, FormError
 from const import SymbolType, Provider
-from symbol_registry import search_longbridge_symbols, sync_longbridge_symbol
+from symbol_registry import search_longbridge_symbols, sync_longbridge_symbol, get_static_info
 
 # ---------- logging ----------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -210,6 +210,7 @@ def ensure_watchlist_item_category_column():
                 'CREATE INDEX IF NOT EXISTS idx_watchlist_item_category '
                 'ON watchlist_item (watchlist_id, category)'
             )
+
 
 
 # ---------- Flask app ----------
@@ -1158,6 +1159,14 @@ def delete_portfolio_node(dentry_id):
     delete_dentry_recursive(dentry)
     db.session.commit()
     return api_v1_success(True)
+
+
+@api_v1_bp.route('/symbols/<string:symbol>/static-info', methods=['GET'])
+def get_symbol_static_info(symbol):
+    data = get_static_info(symbol)
+    if data is None:
+        return api_v1_error(404100, f"symbol '{symbol}' not found or static info unavailable")
+    return api_v1_success(data)
 
 
 # ---------- UDF Blueprint ----------
