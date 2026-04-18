@@ -1,65 +1,8 @@
-export const closeVsPrevStudyName = 'Close vs Previous Close'
 export const openVsLatestCloseStudyName = 'Open vs Latest Close'
 export const openVsLatestCloseInputId = 'latestClose'
 
 export function getCustomIndicators(PineJS) {
-  return [
-    createCloseVsPrevIndicator(PineJS),
-    createOpenVsLatestCloseIndicator(PineJS),
-  ]
-}
-
-function createCloseVsPrevIndicator(PineJS) {
-  return {
-    name: closeVsPrevStudyName,
-    metainfo: {
-      _metainfoVersion: 53,
-      id: `${closeVsPrevStudyName}@tv-basicstudies-1`,
-      description: closeVsPrevStudyName,
-      shortDescription: '涨跌幅',
-      is_price_study: true,
-      is_hidden_study: false,
-      isCustomIndicator: true,
-      format: {
-        type: 'percent',
-        precision: 2,
-      },
-      plots: [{ id: 'close_vs_prev', type: 'line' }],
-      styles: {
-        close_vs_prev: {
-          title: '涨跌幅',
-          histogramBase: 0,
-        },
-      },
-      defaults: {
-        styles: {
-          close_vs_prev: buildLegendStyle('#1bbf9b'),
-        },
-        inputs: {},
-      },
-      inputs: [],
-    },
-    constructor: function () {
-      this.init = function (context, inputCallback) {
-        this._context = context
-        this._input = inputCallback
-      }
-
-      this.main = function (context, inputCallback) {
-        this._context = context
-        this._input = inputCallback
-
-        const close = PineJS.Std.close(this._context)
-        const previousClose = this._context.new_var(close).get(1)
-        const closeVsPrev =
-          Number.isFinite(previousClose) && previousClose !== 0
-            ? ((close - previousClose) / previousClose) * 100
-            : Number.NaN
-
-        return [closeVsPrev]
-      }
-    },
-  }
+  return [createOpenVsLatestCloseIndicator(PineJS)]
 }
 
 function createOpenVsLatestCloseIndicator(PineJS) {

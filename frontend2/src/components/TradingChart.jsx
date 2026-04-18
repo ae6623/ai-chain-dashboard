@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
-  closeVsPrevStudyName,
   getCustomIndicators,
   openVsLatestCloseInputId,
   openVsLatestCloseStudyName,
@@ -462,6 +461,13 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
           const chart = localWidget.activeChart()
           chartApiRef.current = chart
 
+          // 强制应用图例设置
+          chart.applyOverrides({
+            'paneProperties.legendProperties.showSeriesTitle': true,
+            'paneProperties.legendProperties.showSeriesOHLC': true,
+            'paneProperties.legendProperties.showBarChange': true,
+          })
+
           try {
             legacyTrendStudyNames.forEach((studyName) => {
               const legacyStudyId = findStudyIdByName(chart, studyName)
@@ -472,12 +478,6 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
             if (!findStudyIdByName(chart, defaultTrendStudyName)) {
               await chart.createStudy(defaultTrendStudyName, true, false)
-            }
-
-            if (!findStudyIdByName(chart, closeVsPrevStudyName)) {
-              await chart.createStudy(closeVsPrevStudyName, true, false, undefined, undefined, {
-                priceScale: 'no-scale',
-              })
             }
 
             let openVsLatestCloseStudyId = findStudyIdByName(chart, openVsLatestCloseStudyName)
