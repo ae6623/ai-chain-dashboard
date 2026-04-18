@@ -4,11 +4,14 @@
 避免用户访问时等待慢速的外部 API 调用。
 
 常见用法：
-    # 只刷新"过期 / 未缓存"的（默认行为，24h 内 fresh 的跳过）
+    # 默认：只刷新 portfolio 中引用到的 symbol，且跳过 24h 内 fresh 的
     .venv/bin/python scripts/refresh_symbol_static_info.py
 
-    # 强制刷新所有股票，忽略缓存
+    # 强制刷新 portfolio 内所有股票（忽略 fresh 缓存）
     .venv/bin/python scripts/refresh_symbol_static_info.py --force
+
+    # 刷新所有 longbridge symbol（不限于 portfolio）
+    .venv/bin/python scripts/refresh_symbol_static_info.py --all
 
     # 只刷新指定 symbol
     .venv/bin/python scripts/refresh_symbol_static_info.py --symbols AAPL.US TSLA.US 700.HK
@@ -39,7 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 
 from app import app
-from models import Symbol, db
+from models import DataStock, Symbol, db
 from symbol_registry import get_static_info, is_longbridge_symbol, _is_static_info_fresh
 
 logger = logging.getLogger('refresh_static_info')
@@ -51,6 +54,8 @@ def parse_args() -> argparse.Namespace:
                         help='强制刷新所有 symbol，忽略 fresh 缓存')
     parser.add_argument('--symbols', nargs='*',
                         help='只刷新指定 symbol（例：AAPL.US TSLA.US）')
+    parser.add_argument('--all', action='store_true',
+                        help='刷新所有 longbridge symbol（默认只刷新 portfolio 中引用到的）')
     parser.add_argument('--limit', type=int, default=0,
                         help='最多刷新多少个 symbol（0 = 不限制）')
     parser.add_argument('--workers', type=int, default=1,
@@ -73,7 +78,14 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
-def select_symbols(target_symbols: Optional[List[str]], force: bool, limit: int) -> List[Symbol]:
+def _get_portfolio_symbols() -> set:
+    """从 data_stock 表读取所有 portfolio 中引用的 symbol（去重、标准化大写）"""
+    rows = db.session.query(DataStock.symbol).distinct().all()
+    return {(r[0] or '').strip().upper() for r in rows if r[0]}
+
+
+def select_symbols(target_symbols: Optional[List[str]], force: bool, limit: int,
+                   include_all: bool) -> List[Symbol]:
     """挑出需要刷新的 Symbol 记录"""
     query = Symbol.query
     if target_symbols:
@@ -84,6 +96,11 @@ def select_symbols(target_symbols: Optional[List[str]], force: bool, limit: int)
 
     # 过滤非 longbridge 的
     records = [r for r in records if is_longbridge_symbol(r.symbol)]
+
+    # 默认只保留 portfolio 中引用的；--all 或显式 --symbols 时不过滤
+    if not include_all and not target_symbols:
+        portfolio_set = _get_portfolio_symbols()
+        records = [r for r in records if r.symbol in portfolio_set]
 
     if not force:
         # 过滤掉 fresh 的
@@ -173,7 +190,7 @@ def main() -> int:
     setup_logging(args.verbose)
 
     with app.app_context():
-        records = select_symbols(args.symbols, args.force, args.limit)
+        records = select_symbols(args.symbols, args.force, args.limit, args.all)
 
         if not records:
             logger.info('No symbols to refresh. (all fresh, or no matching records)')
