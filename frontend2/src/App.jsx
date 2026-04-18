@@ -437,6 +437,22 @@ function App() {
               </header>
               <div className="company-info-grid">
                 <div className="company-info-item">
+                  <span className="company-info-label">市值</span>
+                  <span className="company-info-value">
+                    {Number.isFinite(staticInfo.total_shares) && Number.isFinite(chartSnapshot.latest?.close)
+                      ? formatLargeNumber(staticInfo.total_shares * chartSnapshot.latest.close)
+                      : '--'}
+                  </span>
+                </div>
+                <div className="company-info-item">
+                  <span className="company-info-label">流通市值</span>
+                  <span className="company-info-value">
+                    {Number.isFinite(staticInfo.circulating_shares) && Number.isFinite(chartSnapshot.latest?.close)
+                      ? formatLargeNumber(staticInfo.circulating_shares * chartSnapshot.latest.close)
+                      : '--'}
+                  </span>
+                </div>
+                <div className="company-info-item">
                   <span className="company-info-label">总股本</span>
                   <span className="company-info-value">{formatLargeNumber(staticInfo.total_shares)}</span>
                 </div>
