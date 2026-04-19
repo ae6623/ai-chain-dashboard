@@ -972,7 +972,7 @@ export default function PortfolioSidebar({
     }
   }
 
-  async function onSymbolSearch(query, signal) {
+  const onSymbolSearch = useCallback(async (query, signal) => {
     const payload = await requestApiData(
       buildUrl(chartUdfBaseUrl, '/api/udf/search', { query, limit: 8 }),
       { signal },
@@ -993,7 +993,7 @@ export default function PortfolioSidebar({
         return true
       })
       .slice(0, 8)
-  }
+  }, [chartUdfBaseUrl])
 
   async function saveMarkdownContent(content) {
     if (!markdownViewer?.dentryId) return
