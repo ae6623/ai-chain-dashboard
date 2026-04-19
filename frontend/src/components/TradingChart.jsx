@@ -111,7 +111,9 @@ function normalizeResolution(resolution) {
 }
 
 function buildUrl(baseUrl, pathname, params = {}) {
-  const url = new URL(`${normalizeBaseUrl(baseUrl)}${pathname}`)
+  const full = `${normalizeBaseUrl(baseUrl)}${pathname}`
+  // relative URLs need window.location as base
+  const url = full.startsWith('http') ? new URL(full) : new URL(full, window.location.origin)
 
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
