@@ -670,7 +670,7 @@ export default function PortfolioSidebar({
   const loadTree = useCallback(async () => {
     setTreeState((current) => ({ ...current, status: current.status === 'ready' ? 'ready' : 'loading', error: '' }))
     try {
-      const roots = await requestApiData(`${apiBaseUrl}/api/v1/portfolios/tree`)
+      const roots = await requestApiData(`${apiBaseUrl}/v1/portfolios/tree`)
       setTreeState({ status: 'ready', roots: Array.isArray(roots) ? roots : [], error: '' })
     } catch (error) {
       console.error('[PortfolioSidebar] load tree failed', error)
@@ -745,7 +745,7 @@ export default function PortfolioSidebar({
       const entries = await Promise.all(visibleSymbols.map(async (symbol) => {
         try {
           const response = await fetch(
-            buildUrl(chartUdfBaseUrl, '/api/udf/history', { symbol, resolution: '1D', countback: 2 }),
+            buildUrl(chartUdfBaseUrl, '/udf/history', { symbol, resolution: '1D', countback: 2 }),
             { headers: { Accept: 'application/json' } },
           )
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -854,7 +854,7 @@ export default function PortfolioSidebar({
   async function openMarkdownViewer(node) {
     setContextMenu(null)
     try {
-      const fresh = await requestApiData(`${apiBaseUrl}/api/v1/portfolios/nodes/${node.dentryId}`)
+      const fresh = await requestApiData(`${apiBaseUrl}/v1/portfolios/nodes/${node.dentryId}`)
       setMarkdownViewer({
         open: true,
         dentryId: node.dentryId,
@@ -886,7 +886,7 @@ export default function PortfolioSidebar({
       : `确认删除 ${nodeLabel}？`
     if (!window.confirm(warning)) return
     try {
-      await requestApiData(`${apiBaseUrl}/api/v1/portfolios/nodes/${node.dentryId}`, { method: 'DELETE' })
+      await requestApiData(`${apiBaseUrl}/v1/portfolios/nodes/${node.dentryId}`, { method: 'DELETE' })
       await loadTree()
     } catch (error) {
       window.alert(error.message || '删除失败')
@@ -919,7 +919,7 @@ export default function PortfolioSidebar({
         if (editor.type === 'stock') body.symbol = symbol
         if (editor.type === 'markdown') body.content = editor.content ?? ''
 
-        const created = await requestApiData(`${apiBaseUrl}/api/v1/portfolios/nodes`, {
+        const created = await requestApiData(`${apiBaseUrl}/v1/portfolios/nodes`, {
           method: 'POST',
           body: JSON.stringify(body),
         })
@@ -960,7 +960,7 @@ export default function PortfolioSidebar({
           }
           body.symbol = symbol
         }
-        await requestApiData(`${apiBaseUrl}/api/v1/portfolios/nodes/${editor.dentryId}`, {
+        await requestApiData(`${apiBaseUrl}/v1/portfolios/nodes/${editor.dentryId}`, {
           method: 'PATCH',
           body: JSON.stringify(body),
         })
@@ -974,7 +974,7 @@ export default function PortfolioSidebar({
 
   const onSymbolSearch = useCallback(async (query, signal) => {
     const payload = await requestApiData(
-      buildUrl(chartUdfBaseUrl, '/api/udf/search', { query, limit: 8 }),
+      buildUrl(chartUdfBaseUrl, '/udf/search', { query, limit: 8 }),
       { signal },
     )
     const seen = new Set()
@@ -997,7 +997,7 @@ export default function PortfolioSidebar({
 
   async function saveMarkdownContent(content) {
     if (!markdownViewer?.dentryId) return
-    await requestApiData(`${apiBaseUrl}/api/v1/portfolios/nodes/${markdownViewer.dentryId}`, {
+    await requestApiData(`${apiBaseUrl}/v1/portfolios/nodes/${markdownViewer.dentryId}`, {
       method: 'PATCH',
       body: JSON.stringify({ content }),
     })
@@ -1049,7 +1049,7 @@ export default function PortfolioSidebar({
 
   async function moveNode(sourceNode, targetParentInodeId) {
     try {
-      await requestApiData(`${apiBaseUrl}/api/v1/portfolios/nodes/${sourceNode.dentryId}`, {
+      await requestApiData(`${apiBaseUrl}/v1/portfolios/nodes/${sourceNode.dentryId}`, {
         method: 'PATCH',
         body: JSON.stringify({ parentId: targetParentInodeId }),
       })

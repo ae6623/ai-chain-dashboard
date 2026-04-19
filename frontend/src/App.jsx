@@ -94,7 +94,7 @@ function inferMarketLabel(item) {
 }
 
 async function fetchHistoryPayload(symbol, resolution = '1D', countback = 20) {
-  const url = new URL(`${chartUdfBaseUrl}/api/udf/history`)
+  const url = new URL(`${chartUdfBaseUrl}/udf/history`)
   url.searchParams.set('symbol', symbol)
   url.searchParams.set('resolution', resolution)
   url.searchParams.set('countback', String(countback))
@@ -276,7 +276,7 @@ function App() {
 
     async function loadStaticInfo() {
       try {
-        const response = await fetch(`${portfolioApiBaseUrl}/api/v1/symbols/${encodeURIComponent(activeSymbol)}/static-info`)
+        const response = await fetch(`${portfolioApiBaseUrl}/v1/symbols/${encodeURIComponent(activeSymbol)}/static-info`)
         if (!response.ok) return
         const json = await response.json()
         if (!cancelled && json.code === 0 && json.data) {

@@ -203,7 +203,7 @@ function createUdfDatafeed({ baseUrl, description = '', onBarsLoaded, onBarUpdat
 
   async function getConfig() {
     if (!configPromise) {
-      configPromise = fetchJson(baseUrl, '/api/udf/config')
+      configPromise = fetchJson(baseUrl, '/udf/config')
         .then((payload) => ({ ...defaultDatafeedConfig, ...payload }))
         .catch((error) => {
           console.error('[TradingChart] Failed to load UDF config.', error)
@@ -229,7 +229,7 @@ function createUdfDatafeed({ baseUrl, description = '', onBarsLoaded, onBarUpdat
       })
     },
     searchSymbols(userInput, exchange, symbolType, onResult) {
-      fetchJson(baseUrl, '/api/udf/search', {
+      fetchJson(baseUrl, '/udf/search', {
         query: userInput.trim(),
         exchange,
         type: symbolType,
@@ -245,7 +245,7 @@ function createUdfDatafeed({ baseUrl, description = '', onBarsLoaded, onBarUpdat
         })
     },
     resolveSymbol(symbolName, onResolve, onError) {
-      fetchJson(baseUrl, '/api/udf/symbols', { symbol: symbolName })
+      fetchJson(baseUrl, '/udf/symbols', { symbol: symbolName })
         .then((payload) => {
           window.setTimeout(() => onResolve(mapResolvedSymbolInfo(payload, description)), 0)
         })
@@ -255,7 +255,7 @@ function createUdfDatafeed({ baseUrl, description = '', onBarsLoaded, onBarUpdat
         })
     },
     getBars(requestedSymbol, resolution, periodParams, onResult, onError) {
-      fetchJson(baseUrl, '/api/udf/history', {
+      fetchJson(baseUrl, '/udf/history', {
         symbol: getSymbolName(requestedSymbol),
         resolution: normalizeResolution(resolution),
         from: periodParams?.from,
@@ -279,7 +279,7 @@ function createUdfDatafeed({ baseUrl, description = '', onBarsLoaded, onBarUpdat
 
       const pollLatestBar = async () => {
         try {
-          const payload = await fetchJson(baseUrl, '/api/udf/history', {
+          const payload = await fetchJson(baseUrl, '/udf/history', {
             symbol: symbolName,
             resolution: normalizeResolution(resolution),
             countback: 2,
@@ -311,7 +311,7 @@ function createUdfDatafeed({ baseUrl, description = '', onBarsLoaded, onBarUpdat
       }
     },
     getServerTime(callback) {
-      fetchJson(baseUrl, '/api/udf/time')
+      fetchJson(baseUrl, '/udf/time')
         .then((payload) => {
           const serverTime =
             typeof payload === 'number' ? payload : Number(payload?.time ?? payload?.t ?? payload)
