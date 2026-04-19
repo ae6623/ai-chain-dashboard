@@ -16,6 +16,7 @@ node_modules/
 dist/
 dist-ssr/
 coverage/
+.vite/
 
 # Python cache and local state
 __pycache__/
