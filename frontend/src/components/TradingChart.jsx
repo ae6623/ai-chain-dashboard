@@ -364,8 +364,18 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
     barsRef.current = mergeBars(barsRef.current, [incomingBar])
   }, [])
+  // 切换 symbol 时只换数据，不重建 widget
   useEffect(() => {
-    barsRef.current = []
+    const chart = chartApiRef.current
+    if (!chart || !chartReady) return
+    const currentSymbol = chart.symbol()
+    if (currentSymbol !== symbol) {
+      chart.setSymbol(symbol, normalizeResolution(interval))
+    }
+  }, [symbol, interval, chartReady])
+
+  // 仅首次挂载创建 widget
+  useEffect(() => {
     chartApiRef.current = null
     openVsLatestCloseStudyIdRef.current = null
     hoveredBarTimeRef.current = null
@@ -562,7 +572,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
         widgetRef.current = null
       }
     }
-  }, [description, interval, normalizedBaseUrl, storeBars, storeLatestBar, symbol, syncHoverLegendStudyInput])
+  }, [normalizedBaseUrl, storeBars, storeLatestBar, syncHoverLegendStudyInput])
 
   // Watch for VP study presence and input changes, then drive the overlay.
   useEffect(() => {
