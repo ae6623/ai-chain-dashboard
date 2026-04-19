@@ -2,6 +2,8 @@
 
 一个开源的股票行情看板平台：TradingView 专业图表 + 多数据源聚合 + 自建 Portfolio 组合管理 + 公司基本面缓存。
 
+![Stock Platform screenshot](docs/images/screenshot.png)
+
 - **后端**：Flask + SQLAlchemy，提供 TradingView UDF 兼容的行情接口、Portfolio 组合（文件夹/股票/Markdown 笔记三位一体）、证券静态信息及基本面缓存。
 - **前端**：Vite + React 19 + TradingView Charting Library，暗色主题的交易终端 UI。
 - **数据源**：Longbridge (OpenAPI) / Binance / FMP / Polygon / Finnhub / AllTick。
