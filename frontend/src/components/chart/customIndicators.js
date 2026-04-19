@@ -155,6 +155,43 @@ function buildHgPlots() {
   push('sellPro',HG_SELL_PRO_SLOTS,
     'rgba(255,  30,  30, 1.0)', 'rgba(255,  30,  30, 0.55)', '看跌 PRO')
 
+  // 4 个 shape 标记, 画在 gap 被确认的 bar (WRB+1) 上/下方
+  const markers = [
+    { id: 'marker_buy',     title: '看涨',     text: '看涨',
+      location: 'BelowBar', plottype: 'shape_triangle_up',
+      color: 'rgba(  0, 195, 255, 1.0)', size: 'small' },
+    { id: 'marker_buyPro',  title: '看涨 PRO', text: '看涨 PRO',
+      location: 'BelowBar', plottype: 'shape_arrow_up',
+      color: 'rgba(  0, 255, 140, 1.0)', size: 'normal' },
+    { id: 'marker_sell',    title: '看跌',     text: '看跌',
+      location: 'AboveBar', plottype: 'shape_triangle_down',
+      color: 'rgba(255,  80,  80, 1.0)', size: 'small' },
+    { id: 'marker_sellPro', title: '看跌 PRO', text: '看跌 PRO',
+      location: 'AboveBar', plottype: 'shape_arrow_down',
+      color: 'rgba(255,  30,  30, 1.0)', size: 'normal' },
+  ]
+  for (const m of markers) {
+    plots.push({ id: m.id, type: 'shapes' })
+    styles[m.id] = {
+      title: m.title,
+      text: m.text,
+      isHidden: false,
+      location: m.location,
+      plottype: m.plottype,
+      size: m.size,
+    }
+    plotDefaults[m.id] = {
+      color: m.color,
+      textColor: m.color,
+      transparency: 0,
+      visible: true,
+      plottype: m.plottype,
+      location: m.location,
+      size: m.size,
+      text: m.text,
+    }
+  }
+
   return { plots, styles, plotDefaults, filledAreas, filledAreasStyle }
 }
 
@@ -203,7 +240,8 @@ function createHiddenGapIndicator(PineJS) {
       ],
     },
     constructor: function () {
-      const nanSlots = new Array(HG_TOTAL_SLOTS * 2).fill(Number.NaN)
+      // HG_TOTAL_SLOTS * 2 (top/bottom lines) + 4 (marker plots)
+      const nanSlots = new Array(HG_TOTAL_SLOTS * 2 + 4).fill(Number.NaN)
 
       this.init = function (context, inputCallback) {
         this._context = context
@@ -290,6 +328,24 @@ function createHiddenGapIndicator(PineJS) {
         pushSlots(buckets.buyPro,  HG_BUY_PRO_SLOTS)
         pushSlots(buckets.sell,    HG_SELL_NORMAL_SLOTS)
         pushSlots(buckets.sellPro, HG_SELL_PRO_SLOTS)
+
+        // Markers: gap.startIndex 是 WRB, 但 PineJS 只能在"当前调用 bar"锚定
+        // shape. 所以在 WRB+1 (= gap 被确认的那根 bar) 画 marker.
+        let mBuy = Number.NaN, mBuyPro = Number.NaN
+        let mSell = Number.NaN, mSellPro = Number.NaN
+        const markerIdx = curIdx - 1
+        for (const gap of gaps) {
+          if (gap.startIndex !== markerIdx) continue
+          const anchor = gap.type === 'buy' ? bars[curIdx].low : bars[curIdx].high
+          if (gap.type === 'buy') {
+            if (gap.pro) mBuyPro = anchor
+            else mBuy = anchor
+          } else {
+            if (gap.pro) mSellPro = anchor
+            else mSell = anchor
+          }
+        }
+        out.push(mBuy, mBuyPro, mSell, mSellPro)
         return out
       }
     },
