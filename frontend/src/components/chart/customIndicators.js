@@ -4,8 +4,12 @@ export const openVsLatestCloseStudyName = 'Open vs Latest Close'
 export const openVsLatestCloseInputId = 'latestClose'
 
 export const hiddenGapStudyName = 'Hidden Gap'
-const HG_BUY_SLOTS = 5
-const HG_SELL_SLOTS = 5
+const HG_BUY_NORMAL_SLOTS = 3
+const HG_BUY_PRO_SLOTS = 3
+const HG_SELL_NORMAL_SLOTS = 3
+const HG_SELL_PRO_SLOTS = 3
+const HG_TOTAL_SLOTS =
+  HG_BUY_NORMAL_SLOTS + HG_BUY_PRO_SLOTS + HG_SELL_NORMAL_SLOTS + HG_SELL_PRO_SLOTS
 
 export const volumeProfileStudyName = 'Volume Profile'
 
@@ -140,8 +144,16 @@ function buildHgPlots() {
     }
   }
 
-  push('buy', HG_BUY_SLOTS, 'rgba(0, 195, 255, 0.8)', 'rgba(0, 195, 255, 0.35)', '看涨')
-  push('sell', HG_SELL_SLOTS, 'rgba(255, 26, 26, 0.8)', 'rgba(255, 26, 26, 0.35)', '看跌')
+  // 4 组 slot: 普通看涨 / PRO 看涨 / 普通看跌 / PRO 看跌
+  // PRO 版本使用更醒目的颜色让强势信号一眼可辨
+  push('buy',    HG_BUY_NORMAL_SLOTS,
+    'rgba(  0, 195, 255, 0.7)', 'rgba(  0, 195, 255, 0.25)', '看涨')
+  push('buyPro', HG_BUY_PRO_SLOTS,
+    'rgba(  0, 255, 140, 1.0)', 'rgba(  0, 255, 140, 0.50)', '看涨 PRO')
+  push('sell',   HG_SELL_NORMAL_SLOTS,
+    'rgba(255,  80,  80, 0.7)', 'rgba(255,  80,  80, 0.25)', '看跌')
+  push('sellPro',HG_SELL_PRO_SLOTS,
+    'rgba(255,  30,  30, 1.0)', 'rgba(255,  30,  30, 0.55)', '看跌 PRO')
 
   return { plots, styles, plotDefaults, filledAreas, filledAreasStyle }
 }
@@ -191,7 +203,7 @@ function createHiddenGapIndicator(PineJS) {
       ],
     },
     constructor: function () {
-      const nanSlots = new Array((HG_BUY_SLOTS + HG_SELL_SLOTS) * 2).fill(Number.NaN)
+      const nanSlots = new Array(HG_TOTAL_SLOTS * 2).fill(Number.NaN)
 
       this.init = function (context, inputCallback) {
         this._context = context
@@ -254,33 +266,30 @@ function createHiddenGapIndicator(PineJS) {
           maxGapBoxes: 200,
         })
 
-        const activeBuy = []
-        const activeSell = []
+        const buckets = { buy: [], buyPro: [], sell: [], sellPro: [] }
         for (const gap of gaps) {
           if (curIdx < gap.startIndex || curIdx > gap.endIndex) continue
-          if (gap.type === 'buy') activeBuy.push(gap)
-          else activeSell.push(gap)
+          const key = gap.type === 'buy'
+            ? (gap.pro ? 'buyPro' : 'buy')
+            : (gap.pro ? 'sellPro' : 'sell')
+          buckets[key].push(gap)
         }
-        activeBuy.sort((a, b) => a.startIndex - b.startIndex)
-        activeSell.sort((a, b) => a.startIndex - b.startIndex)
+        for (const k of Object.keys(buckets)) {
+          buckets[k].sort((a, b) => a.startIndex - b.startIndex)
+        }
 
         const out = []
-        for (let i = 0; i < HG_BUY_SLOTS; i++) {
-          const gap = activeBuy[i]
-          if (gap) {
-            out.push(gap.top, gap.bottom)
-          } else {
-            out.push(Number.NaN, Number.NaN)
+        const pushSlots = (list, count) => {
+          for (let i = 0; i < count; i++) {
+            const gap = list[i]
+            if (gap) out.push(gap.top, gap.bottom)
+            else out.push(Number.NaN, Number.NaN)
           }
         }
-        for (let i = 0; i < HG_SELL_SLOTS; i++) {
-          const gap = activeSell[i]
-          if (gap) {
-            out.push(gap.top, gap.bottom)
-          } else {
-            out.push(Number.NaN, Number.NaN)
-          }
-        }
+        pushSlots(buckets.buy,     HG_BUY_NORMAL_SLOTS)
+        pushSlots(buckets.buyPro,  HG_BUY_PRO_SLOTS)
+        pushSlots(buckets.sell,    HG_SELL_NORMAL_SLOTS)
+        pushSlots(buckets.sellPro, HG_SELL_PRO_SLOTS)
         return out
       }
     },
