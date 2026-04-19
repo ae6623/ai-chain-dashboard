@@ -191,7 +191,7 @@ function App() {
 
   const connectLogs = useCallback(() => {
     if (esRef.current) esRef.current.close()
-    const es = new EventSource(`${chartUdfBaseUrl}/api/logs/stream`)
+    const es = new EventSource(`${chartUdfBaseUrl}/logs/stream`)
     esRef.current = es
     es.onmessage = (e) => {
       if (e.data && !e.data.startsWith(' : ')) {
@@ -452,7 +452,7 @@ function App() {
                 </button>
               ))}
             </div>
-            <div className="chart-footnote">{chartUdfBaseUrl}/api/udf · OHLCV · {activeSymbol}</div>
+            <div className="chart-footnote">{chartUdfBaseUrl}/udf · OHLCV · {activeSymbol}</div>
           </footer>
         </section>
 
