@@ -5,7 +5,6 @@ import {
   openVsLatestCloseInputId,
   openVsLatestCloseStudyName,
 } from './chart/customIndicators'
-import { detectHiddenGaps, formatGapDiff } from './chart/hiddenGap'
 
 const libraryPath = '/charting_library/'
 const libraryScriptPath = `${libraryPath}charting_library.js`
@@ -333,10 +332,6 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
   const latestCloseSnapshotRef = useRef(null)
   const barsRef = useRef([])
   const [loadError, setLoadError] = useState('')
-  const [showHg, setShowHg] = useState(false)
-  const [barsVersion, setBarsVersion] = useState(0)
-  const [chartReady, setChartReady] = useState(false)
-  const hgEntitiesRef = useRef([])
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
   const syncHoverLegendStudyInput = useCallback((latestClose = latestCloseSnapshotRef.current) => {
     const chart = chartApiRef.current
@@ -353,18 +348,14 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
     }
   }, [])
   const storeBars = useCallback((incomingBars) => {
-    const nextBars = mergeBars(barsRef.current, incomingBars)
-    barsRef.current = nextBars
-    setBarsVersion((v) => v + 1)
+    barsRef.current = mergeBars(barsRef.current, incomingBars)
   }, [])
   const storeLatestBar = useCallback((incomingBar) => {
     if (!incomingBar) {
       return
     }
 
-    const nextBars = mergeBars(barsRef.current, [incomingBar])
-    barsRef.current = nextBars
-    setBarsVersion((v) => v + 1)
+    barsRef.current = mergeBars(barsRef.current, [incomingBar])
   }, [])
   useEffect(() => {
     barsRef.current = []
@@ -372,9 +363,6 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
     openVsLatestCloseStudyIdRef.current = null
     hoveredBarTimeRef.current = null
     latestCloseSnapshotRef.current = null
-    hgEntitiesRef.current = []
-    setChartReady(false)
-    setBarsVersion(0)
 
     let cancelled = false
     let localWidget = null
@@ -470,7 +458,6 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
           const chart = localWidget.activeChart()
           chartApiRef.current = chart
-          setChartReady(true)
 
           // 强制应用图例设置
           chart.applyOverrides({
@@ -558,8 +545,6 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
       openVsLatestCloseStudyIdRef.current = null
       hoveredBarTimeRef.current = null
       latestCloseSnapshotRef.current = null
-      hgEntitiesRef.current = []
-      setChartReady(false)
       if (localWidget) {
         localWidget.remove()
       }
@@ -569,100 +554,8 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
     }
   }, [description, interval, normalizedBaseUrl, storeBars, storeLatestBar, symbol, syncHoverLegendStudyInput])
 
-  // 绘制 / 清除 Hidden Gap
-  useEffect(() => {
-    const chart = chartApiRef.current
-    if (!chartReady || !chart) return
-
-    // 先清除已有 HG 图元
-    hgEntitiesRef.current.forEach((id) => {
-      try {
-        chart.removeEntity(id)
-      } catch (error) {
-        console.debug('[TradingChart] removeEntity failed', error)
-      }
-    })
-    hgEntitiesRef.current = []
-
-    if (!showHg) return
-
-    const bars = barsRef.current
-    if (!bars || bars.length < 10) return
-
-    const { gaps } = detectHiddenGaps(bars)
-    if (!gaps.length) return
-
-    const nextIds = []
-    gaps.forEach((gap) => {
-      const startBar = bars[gap.startIndex]
-      const endBar = bars[gap.endIndex] ?? bars[bars.length - 1]
-      if (!startBar || !endBar) return
-
-      const startTime = startBar.time / 1000
-      const endTime = endBar.time / 1000
-
-      const isBuy = gap.type === 'buy'
-      const fillColor = gap.filled
-        ? (isBuy ? 'rgba(0, 150, 255, 0.15)' : 'rgba(255, 50, 50, 0.15)')
-        : (isBuy ? 'rgba(0, 195, 255, 0.35)' : 'rgba(255, 26, 26, 0.35)')
-      const borderColor = gap.pro
-        ? (isBuy ? 'rgba(0, 255, 100, 0.9)' : 'rgba(255, 80, 80, 0.9)')
-        : (isBuy ? 'rgba(0, 195, 255, 0.6)' : 'rgba(255, 26, 26, 0.6)')
-
-      const labelText = `${isBuy ? '看涨' : '看跌'}${gap.pro ? ' PRO' : ''} · ${formatGapDiff(gap.diff)}`
-
-      try {
-        const entityId = chart.createMultipointShape(
-          [
-            { time: startTime, price: gap.top },
-            { time: endTime, price: gap.bottom },
-          ],
-          {
-            shape: 'rectangle',
-            lock: true,
-            disableSelection: true,
-            disableSave: true,
-            disableUndo: true,
-            text: labelText,
-            overrides: {
-              color: borderColor,
-              linewidth: gap.pro ? 2 : 1,
-              fillBackground: true,
-              backgroundColor: fillColor,
-              transparency: gap.filled ? 80 : 60,
-              showLabel: true,
-              text: labelText,
-              textcolor: gap.pro
-                ? (isBuy ? '#00ff64' : '#ff5050')
-                : '#ffffff',
-              fontsize: 11,
-              horzLabelsAlign: 'left',
-              vertLabelsAlign: 'top',
-              bold: gap.pro,
-            },
-          }
-        )
-        if (entityId) nextIds.push(entityId)
-      } catch (error) {
-        console.warn('[TradingChart] createMultipointShape for HG failed', error)
-      }
-    })
-
-    hgEntitiesRef.current = nextIds
-  }, [showHg, barsVersion, chartReady])
-
   return (
     <div className="price-chart tv-chart-shell">
-      <div className="tv-chart-indicator-bar">
-        <button
-          type="button"
-          className={'tv-indicator-toggle' + (showHg ? ' active' : '')}
-          onClick={() => setShowHg((v) => !v)}
-          title="Hidden Gap — 识别 WRB 隐藏缺口"
-        >
-          HG
-        </button>
-      </div>
       <div ref={containerRef} className="tv-chart-container" />
       {loadError ? (
         <div className="tv-chart-fallback">
