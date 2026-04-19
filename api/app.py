@@ -1410,10 +1410,13 @@ def serve_spa(path):
     return send_from_directory(app.static_folder, 'index.html')
 
 
-# ---------- Live log stream (SSE) ----------
-import queue
+# ---------- Live log stream (SSE) - 默认关闭 ----------
+LOG_STREAM_ENABLED = os.environ.get('LOG_STREAM_ENABLED', '0') == '1'
 
-_log_queue: queue.Queue = None
+if LOG_STREAM_ENABLED:
+    import queue as _queue
+
+    _log_queue: _queue.Queue = None
 
 def _init_log_queue():
     global _log_queue

@@ -634,8 +634,8 @@ function App() {
         <div className="system-clock">2026/04/17 14:05:42</div>
       </footer>
 
-      {/* Admin: Live log panel */}
-      <button
+      {/* Admin: Live log panel - hidden by default, localStorage.setItem('showLogPanel','1') to enable */}
+      {localStorage.getItem('showLogPanel') === '1' && <button
         type="button"
         onClick={() => setLogOpen((v) => !v)}
         style={{
