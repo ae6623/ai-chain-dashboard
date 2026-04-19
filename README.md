@@ -109,7 +109,7 @@ cd api
 | `DATABASE_URL` | 默认 `sqlite:///udf.db`，可改 Postgres |
 | `SECRET_KEY` | Flask session 密钥 |
 | `PORT` | 后端监听端口，默认 `5200` |
-| `LONGPORT_APP_KEY` / `LONGPORT_APP_SECRET` / `LONGPORT_ACCESS_TOKEN` | [Longbridge OpenAPI](https://open.longportapp.com/) 凭证，港美股行情 + 基本面主要来源 |
+| `LONGPORT_APP_KEY` / `LONGPORT_APP_SECRET` / `LONGPORT_ACCESS_TOKEN` | 港美股行情 + 基本面主要来源，前往 [长桥开发者平台 › Tokens](https://open.longbridge.com/account?tab=tokens) 申请 |
 | `BINANCE_API_KEY` / `BINANCE_API_SECRET` | 加密货币行情（可选） |
 | `POLYGON_API_KEY` / `FMP_API_KEY` / `FINNHUB_API_KEY` | 其他综合数据源（可选） |
 
