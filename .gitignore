@@ -20,7 +20,8 @@ coverage/
 # Python cache and local state
 __pycache__/
 *.pyc
-instance/
+instance/*
+!instance/udf.db
 
 # Local environment files
 .env
