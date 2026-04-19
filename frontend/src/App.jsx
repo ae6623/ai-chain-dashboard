@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import './App.css'
 import TradingChart from './components/TradingChart.jsx'
 import PortfolioSidebar from './components/PortfolioSidebar.jsx'
@@ -182,6 +182,49 @@ function App() {
     '--left-panel-width': `${panelWidths.left}px`,
     '--right-panel-width': `${panelWidths.right}px`,
   }
+
+  // --- Admin log panel ---
+  const [logLines, setLogLines] = useState([])
+  const [logOpen, setLogOpen] = useState(false)
+  const logEndRef = useRef(null)
+  const esRef = useRef(null)
+
+  const connectLogs = useCallback(() => {
+    if (esRef.current) esRef.current.close()
+    const es = new EventSource(`${chartUdfBaseUrl}/api/logs/stream`)
+    esRef.current = es
+    es.onmessage = (e) => {
+      if (e.data && !e.data.startsWith(' : ')) {
+        setLogLines((prev) => {
+          const next = [...prev, e.data]
+          return next.length > 500 ? next.slice(-500) : next
+        })
+      }
+    }
+    es.onerror = () => {
+      es.close()
+      esRef.current = null
+    }
+  }, [chartUdfBaseUrl])
+
+  useEffect(() => {
+    connectLogs()
+    return () => {
+      if (esRef.current) {
+        esRef.current.close()
+        esRef.current = null
+      }
+    }
+  }, [connectLogs])
+
+  useEffect(() => {
+    if (logOpen && logEndRef.current) {
+      const sel = window.getSelection()
+      if (!sel || sel.toString() === '') {
+        logEndRef.current.scrollIntoView({ behavior: 'smooth' })
+      }
+    }
+  }, [logLines, logOpen])
 
   useEffect(() => {
     let cancelled = false
@@ -590,6 +633,49 @@ function App() {
         </div>
         <div className="system-clock">2026/04/17 14:05:42</div>
       </footer>
+
+      {/* Admin: Live log panel */}
+      <button
+        type="button"
+        onClick={() => setLogOpen((v) => !v)}
+        style={{
+          position: 'fixed', bottom: 16, right: 16, zIndex: 9999,
+          background: '#222', color: '#4d4', border: '1px solid #4d4',
+          borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
+          fontFamily: 'monospace',
+        }}
+      >
+        {logOpen ? '日志 ▲' : '日志 ▼'}
+      </button>
+
+      {logOpen && (
+        <div style={{
+          position: 'fixed', bottom: 52, right: 16, zIndex: 9998,
+          width: 700, height: 400, background: '#0a0',
+          border: '1px solid #3a3', borderRadius: 4,
+          display: 'flex', flexDirection: 'column', fontSize: 11,
+          fontFamily: 'Consolas, "Courier New", monospace',
+        }}>
+          <div style={{ padding: '6px 10px', background: '#1a1', borderBottom: '1px solid #2a2',
+            color: '#8f8', fontSize: 12, flexShrink: 0, userSelect: 'none' }}>
+            实时日志 (SSE) —— {chartUdfBaseUrl}
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px', color: '#ccc' }}>
+            {logLines.map((line, i) => {
+              const ms = line.match(/duration_ms=(\d+\.?\d*)/)
+              const slow = ms && parseFloat(ms[1]) > 500
+              return (
+                <div key={i} style={{
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                  color: slow ? '#f66' : line.includes('ERROR') ? '#f77' : line.includes('WARN') ? '#fa0' : '#ccc',
+                  fontWeight: slow ? 'bold' : 'normal',
+                }}>{line}</div>
+              )
+            })}
+            <div ref={logEndRef} />
+          </div>
+        </div>
+      )}
     </main>
   )
 }

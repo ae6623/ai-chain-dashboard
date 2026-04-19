@@ -932,15 +932,27 @@ export default function PortfolioSidebar({
           method: 'POST',
           body: JSON.stringify(body),
         })
-        await loadTree()
-        if (editor.type === 'folder' && editor.parentInodeId) {
-          // Auto-expand the parent so user sees the new child
-          const parentDentryId = findParentDentryByInode(treeState.roots, editor.parentInodeId)
-          if (parentDentryId) setExpanded((current) => new Set(current).add(parentDentryId))
-        }
-        if (created?.dentryId) {
-          // also expand newly created folder
-          if (created.type === 'folder') setExpanded((current) => new Set(current).add(created.dentryId))
+        // 乐观更新：直接插入节点，不重拉整树
+        if (created) {
+          const newNode = { ...created, children: [] }
+          if (created.parentId == null) {
+            setTreeState((current) => ({
+              ...current,
+              roots: [...current.roots, newNode],
+            }))
+          } else {
+            setTreeState((current) => ({
+              ...current,
+              roots: _insertNodeIntoTree(current.roots, created.parentId, newNode),
+            }))
+          }
+          if (created.type === 'folder') {
+            setExpanded((current) => new Set(current).add(created.dentryId))
+          }
+          if (editor.parentInodeId) {
+            const parentDentryId = findParentDentryByInode(treeState.roots, editor.parentInodeId)
+            if (parentDentryId) setExpanded((current) => new Set(current).add(parentDentryId))
+          }
         }
       } else {
         if (editor.editingField !== 'symbol' && !name) {
@@ -1247,4 +1259,16 @@ function findParentDentryByInode(nodes, inodeId) {
     }
   }
   return null
+}
+
+function _insertNodeIntoTree(nodes, parentInodeId, newNode) {
+  return nodes.map((node) => {
+    if (node.inodeId === parentInodeId) {
+      return { ...node, children: [...(node.children || []), newNode] }
+    }
+    if (node.children?.length) {
+      return { ...node, children: _insertNodeIntoTree(node.children, parentInodeId, newNode) }
+    }
+    return node
+  })
 }

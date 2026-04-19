@@ -1383,6 +1383,65 @@ app.register_blueprint(api_v1_bp)
 app.register_blueprint(bp)
 
 
+# ---------- Live log stream (SSE) ----------
+import queue
+
+_log_queue: queue.Queue = None
+
+def _init_log_queue():
+    global _log_queue
+    if _log_queue is None:
+        _log_queue = queue.Queue(maxsize=1000)
+
+    class _QueueHandler(logging.Handler):
+        def emit(self, record):
+            msg = self.format(record)
+            try:
+                _log_queue.put_nowait(msg)
+            except queue.Full:
+                pass
+
+    app_logger = logging.getLogger("app")
+    h = _QueueHandler()
+    h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s in %(module)s: %(message)s"))
+    app_logger.addHandler(h)
+
+_init_log_queue()
+
+
+@app.route('/api/logs/stream')
+def logs_stream():
+    """SSE stream of recent + live application logs."""
+    import itertools
+
+    def generate():
+        # 先发历史日志末尾 100 条
+        try:
+            with open(RUNTIME_LOG_FILE, encoding='utf-8') as f:
+                lines = f.readlines()
+            for line in lines[-100:]:
+                line = line.strip()
+                if line:
+                    yield f"data: {line}\n\n"
+        except Exception:
+            pass
+
+        # 然后实时推送
+        while True:
+            try:
+                msg = _log_queue.get(timeout=30)
+                yield f"data: {msg}\n\n"
+            except queue.Empty:
+                yield f"data: : ping\n\n"
+
+    from flask import Response
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'}
+    )
+
+
 # ---------- Health check ----------
 @app.route('/health')
 def health():
@@ -1392,10 +1451,16 @@ def health():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        # 启动时预热 Longbridge HttpClient，避免第一个请求初始化耗时 2.6s
+        import logging as _logging
+        _logging.getLogger("app").info("Warming up Longbridge HttpClient...")
+        from symbol_registry import _get_longbridge_ctx
+        _get_longbridge_ctx()
+        _logging.getLogger("app").info("Longbridge HttpClient ready.")
 
     debug_mode = os.getenv('FLASK_DEBUG', '').strip().lower() in {'1', 'true', 'yes', 'on'}
     host = os.getenv('HOST', '0.0.0.0')
     port = int(os.getenv('PORT', '5200'))
 
     logger.info("Starting API server host=%s port=%s debug=%s", host, port, debug_mode)
-    app.run(host=host, port=port, debug=debug_mode)
+    app.run(host=host, port=port, debug=debug_mode, threaded=True)
