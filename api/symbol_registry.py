@@ -19,16 +19,16 @@ LONGPORT_SUFFIX_TYPE_MAP = {
     '.HK': SymbolType.STOCKS_HK.value,
     '.SH': SymbolType.STOCKS_CN.value,
     '.SZ': SymbolType.STOCKS_CN.value,
-    '.SS': SymbolType.STOCKS_CN.value,
 }
 LONGPORT_TYPE_SUFFIX_MAP = {
     SymbolType.STOCKS_US.value: ('.US',),
     SymbolType.STOCKS_HK.value: ('.HK',),
-    SymbolType.STOCKS_CN.value: ('.SH', '.SZ', '.SS'),
+    SymbolType.STOCKS_CN.value: ('.SH', '.SZ'),
 }
 LONGPORT_SECURITY_LIST_MARKETS = {
     SymbolType.STOCKS_US.value: (Market.US,),
 }
+LONGPORT_DEFAULT_SEARCH_MARKETS = (Market.US,)
 EXACT_SYMBOL_QUERY_RE = re.compile(r'^[A-Z0-9][A-Z0-9.:-]*$')
 SECURITY_LIST_CACHE_TTL_SECONDS = 15 * 60
 
@@ -193,7 +193,7 @@ def _search_longbridge_security_list(query: str, symbol_type: Optional[str], lim
     query_upper = query_text.upper()
     query_lower = query_text.lower()
     ranked_rows = []
-    for market in markets or (Market.US,):
+    for market in markets or LONGPORT_DEFAULT_SEARCH_MARKETS:
         try:
             rows = _get_security_list(market)
         except Exception as exc:
