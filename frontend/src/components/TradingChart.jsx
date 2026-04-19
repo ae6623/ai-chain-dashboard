@@ -4,9 +4,9 @@ import {
   getCustomIndicators,
   openVsLatestCloseInputId,
   openVsLatestCloseStudyName,
+  volumeProfileStudyName,
 } from './chart/customIndicators'
 import VolumeProfileOverlay from './chart/VolumeProfileOverlay'
-import { VP_ALGORITHMS } from './chart/volumeProfile'
 
 const libraryPath = '/charting_library/'
 const libraryScriptPath = `${libraryPath}charting_library.js`
@@ -335,13 +335,9 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
   const barsRef = useRef([])
   const [loadError, setLoadError] = useState('')
   const [chartReady, setChartReady] = useState(false)
-  const [vpEnabled, setVpEnabled] = useState(false)
-  const [vpSettingsOpen, setVpSettingsOpen] = useState(false)
-  const [vpOptions, setVpOptions] = useState({
-    num: 200,
-    algorithm: 'default',
-    width: 30,
-    position: 'right',
+  const [vpState, setVpState] = useState({
+    enabled: false,
+    options: { num: 200, algorithm: 'default', width: 30, position: 'right' },
   })
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
   const syncHoverLegendStudyInput = useCallback((latestClose = latestCloseSnapshotRef.current) => {
@@ -568,88 +564,66 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
     }
   }, [description, interval, normalizedBaseUrl, storeBars, storeLatestBar, symbol, syncHoverLegendStudyInput])
 
+  // Watch for VP study presence and input changes, then drive the overlay.
+  useEffect(() => {
+    if (!chartReady) return undefined
+    const chart = chartApiRef.current
+    if (!chart) return undefined
+
+    const readVpState = () => {
+      try {
+        const study = chart.getAllStudies?.().find(({ name }) => name === volumeProfileStudyName)
+        if (!study) return { enabled: false, options: null }
+        const api = chart.getStudyById?.(study.id)
+        const inputs = api?.getInputValues?.() || []
+        const optionMap = {}
+        inputs.forEach(({ id, value }) => {
+          optionMap[id] = value
+        })
+        return {
+          enabled: true,
+          options: {
+            algorithm: optionMap.algorithm || 'default',
+            num: Number(optionMap.num) || 200,
+            width: Number(optionMap.width) || 30,
+            position: optionMap.position || 'right',
+          },
+        }
+      } catch (error) {
+        console.debug('[TradingChart] readVpState failed', error)
+        return { enabled: false, options: null }
+      }
+    }
+
+    let lastJson = ''
+    const tick = () => {
+      const next = readVpState()
+      const nextJson = JSON.stringify(next)
+      if (nextJson !== lastJson) {
+        lastJson = nextJson
+        setVpState((prev) =>
+          next.enabled
+            ? { enabled: true, options: next.options || prev.options }
+            : { enabled: false, options: prev.options }
+        )
+      }
+    }
+    tick()
+    const timerId = window.setInterval(tick, 500)
+    return () => window.clearInterval(timerId)
+  }, [chartReady])
+
   return (
     <div className="price-chart tv-chart-shell">
-      <div className="tv-chart-indicator-bar">
-        <button
-          type="button"
-          className={'tv-indicator-toggle' + (vpEnabled ? ' active' : '')}
-          onClick={() => setVpEnabled((v) => !v)}
-          title="Volume Profile · 成交量分布"
-        >
-          VP
-        </button>
-        {vpEnabled ? (
-          <button
-            type="button"
-            className="tv-indicator-toggle"
-            onClick={() => setVpSettingsOpen((v) => !v)}
-            title="VP 设置"
-          >
-            ⚙
-          </button>
-        ) : null}
-      </div>
-
-      {vpEnabled && vpSettingsOpen ? (
-        <div className="tv-indicator-panel">
-          <div className="tv-indicator-panel-title">Volume Profile 设置</div>
-          <label>
-            <span>算法</span>
-            <select
-              value={vpOptions.algorithm}
-              onChange={(e) => setVpOptions((o) => ({ ...o, algorithm: e.target.value }))}
-            >
-              {VP_ALGORITHMS.map((a) => (
-                <option key={a} value={a}>
-                  {a === 'default' ? 'default · 简化' : a === 'classic' ? 'classic · 典型价加权' : 'delta · 收盘加权'}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>精度 {vpOptions.num}</span>
-            <input
-              type="range"
-              min="20"
-              max="999"
-              step="10"
-              value={vpOptions.num}
-              onChange={(e) => setVpOptions((o) => ({ ...o, num: Number(e.target.value) }))}
-            />
-          </label>
-          <label>
-            <span>宽度 {vpOptions.width}%</span>
-            <input
-              type="range"
-              min="5"
-              max="70"
-              value={vpOptions.width}
-              onChange={(e) => setVpOptions((o) => ({ ...o, width: Number(e.target.value) }))}
-            />
-          </label>
-          <label>
-            <span>位置</span>
-            <select
-              value={vpOptions.position}
-              onChange={(e) => setVpOptions((o) => ({ ...o, position: e.target.value }))}
-            >
-              <option value="right">right · 右侧</option>
-              <option value="left">left · 左侧</option>
-            </select>
-          </label>
-        </div>
-      ) : null}
-
       <div ref={containerRef} className="tv-chart-container" />
 
       {chartReady && chartApiRef.current && widgetRef.current ? (
         <VolumeProfileOverlay
-          enabled={vpEnabled}
+          enabled={vpState.enabled}
           chart={chartApiRef.current}
           widget={widgetRef.current}
           barsRef={barsRef}
-          options={vpOptions}
+          options={vpState.options}
         />
       ) : null}
 

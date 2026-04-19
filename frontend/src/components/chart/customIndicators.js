@@ -7,10 +7,13 @@ export const hiddenGapStudyName = 'Hidden Gap'
 const HG_BUY_SLOTS = 5
 const HG_SELL_SLOTS = 5
 
+export const volumeProfileStudyName = 'Volume Profile'
+
 export function getCustomIndicators(PineJS) {
   return [
     createOpenVsLatestCloseIndicator(PineJS),
     createHiddenGapIndicator(PineJS),
+    createVolumeProfileIndicator(PineJS),
   ]
 }
 
@@ -279,6 +282,82 @@ function createHiddenGapIndicator(PineJS) {
           }
         }
         return out
+      }
+    },
+  }
+}
+
+// ---------------- Volume Profile (placeholder) ----------------
+// PineJS can't render horizontal pixel-width bars, so this indicator is a
+// "parameter carrier": it shows up in the indicators menu, owns the format
+// dialog, and legend entry, but the actual drawing is done by a Canvas
+// overlay (VolumeProfileOverlay.jsx) which reads back the active study's
+// input values via chart.getAllStudies() + study.getInputValues().
+
+function createVolumeProfileIndicator(PineJS) {
+  return {
+    name: volumeProfileStudyName,
+    metainfo: {
+      _metainfoVersion: 53,
+      id: `${volumeProfileStudyName}@tv-basicstudies-1`,
+      description: volumeProfileStudyName,
+      shortDescription: 'VP',
+      is_price_study: true,
+      is_hidden_study: false,
+      isCustomIndicator: true,
+      format: { type: 'inherit' },
+      plots: [{ id: 'vp_placeholder', type: 'line' }],
+      styles: {
+        vp_placeholder: { title: 'VP 占位', histogramBase: 0 },
+      },
+      defaults: {
+        styles: {
+          vp_placeholder: {
+            color: 'rgba(0,0,0,0)',
+            linestyle: 0,
+            linewidth: 1,
+            plottype: 2,
+            trackPrice: false,
+            transparency: 100,
+            visible: true,
+          },
+        },
+        inputs: {
+          algorithm: 'default',
+          num: 200,
+          width: 30,
+          position: 'right',
+        },
+      },
+      inputs: [
+        {
+          id: 'algorithm',
+          name: '算法',
+          defval: 'default',
+          type: 'text',
+          options: ['default', 'classic', 'delta'],
+        },
+        { id: 'num', name: '精度', defval: 200, type: 'integer', min: 20, max: 999 },
+        { id: 'width', name: '宽度 (%)', defval: 30, type: 'integer', min: 5, max: 70 },
+        {
+          id: 'position',
+          name: '显示位置',
+          defval: 'right',
+          type: 'text',
+          options: ['right', 'left'],
+        },
+      ],
+    },
+    constructor: function () {
+      this.init = function (context, inputCallback) {
+        this._context = context
+        this._input = inputCallback
+      }
+      this.main = function (context, inputCallback) {
+        this._context = context
+        this._input = inputCallback
+        // Indicator draws nothing; Canvas overlay reads inputs separately.
+        return [Number.NaN]
       }
     },
   }
