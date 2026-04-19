@@ -1481,6 +1481,14 @@ def health():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        # 启动时清理历史缓存，避免旧缓存导致 K 线数据截断
+        from models import HistoryCache
+        try:
+            HistoryCache.query.delete()
+            db.session.commit()
+            logger.info("History cache cleared on startup")
+        except Exception:
+            pass
         # 启动时预热 Longbridge HttpClient，避免第一个请求初始化耗时 2.6s
         import logging as _logging
         _logging.getLogger("app").info("Warming up Longbridge HttpClient...")
