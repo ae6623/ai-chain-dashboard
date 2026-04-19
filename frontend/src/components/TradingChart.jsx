@@ -429,9 +429,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
             'display_market_status',
             'timeframes_toolbar',
           ],
-          client_id: 'trade-tv',
-          user_id: 'default',
-          enabled_features: ['study_templates', 'legend_inplace_edit'],
+          enabled_features: ['legend_inplace_edit'],
           overrides: {
             'paneProperties.background': '#0d1420',
             'paneProperties.backgroundType': 'solid',
