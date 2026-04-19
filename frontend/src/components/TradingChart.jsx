@@ -8,7 +8,7 @@ import {
 } from './chart/customIndicators'
 import VolumeProfileOverlay from './chart/VolumeProfileOverlay'
 
-const libraryPath = '/charting_library/'
+const libraryPath = '/trade-tv/charting_library/'
 const libraryScriptPath = `${libraryPath}charting_library.js`
 const defaultUdfBaseUrl = 'http://127.0.0.1:5200'
 const defaultTrendStudyName = 'Moving Average Triple'
@@ -429,6 +429,8 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
             'display_market_status',
             'timeframes_toolbar',
           ],
+          client_id: 'trade-tv',
+          user_id: 'default',
           enabled_features: ['study_templates', 'legend_inplace_edit'],
           overrides: {
             'paneProperties.background': '#0d1420',
