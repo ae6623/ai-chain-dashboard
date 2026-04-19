@@ -177,7 +177,7 @@ function TreeNode({
   isValidDropTarget,
 }) {
   const hasChildren = (node.children?.length ?? 0) > 0
-  const isExpandable = node.type === 'folder' || node.type === 'stock'
+  const isExpandable = (node.type === 'folder' || node.type === 'stock') && hasChildren
   const isExpanded = expandedSet.has(node.dentryId)
   const isSelected = selectedDentryId === node.dentryId
   const isMenuTarget = contextMenuDentryId === node.dentryId
