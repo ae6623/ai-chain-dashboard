@@ -5,6 +5,8 @@ UDF 历史数据查询模块
 """
 
 import logging
+import json
+from datetime import datetime, timezone, timedelta
 from providers.base import HistoryDataProvider
 from providers.alltick import AllTickHistoryProvider
 from providers.longbridge import LongBridgeHistoryProvider
@@ -19,6 +21,10 @@ from config import (
 )
 
 logger = logging.getLogger("app")
+
+# 缓存配置
+CACHE_ENABLED = True
+CACHE_TTL_MINUTES = 60
 
 
 class UDFHistoryManager:
@@ -73,6 +79,15 @@ class UDFHistoryManager:
             "[get_history_data]symbol: %s, resolution: %s, from_time: %s, to_time: %s, countback: %s, provider: %s",
             symbol, resolution, from_time, to_time, countback, preferred_provider
         )
+
+        # 查缓存
+        from models import HistoryCache, db
+        cache_key = HistoryCache.make_cache_key(symbol, resolution)
+        cached = HistoryCache.query.filter_by(cache_key=cache_key).first()
+        if cached and not cached.is_expired():
+            logger.info("[cache_hit]key: %s", cache_key)
+            return json.loads(cached.data)
+
         preferred = next((p for p in self.providers if p.get_name() == preferred_provider), None) if preferred_provider else None
         providers = ([preferred] if preferred else []) + [p for p in self.providers if p != preferred]
 
@@ -82,6 +97,25 @@ class UDFHistoryManager:
             try:
                 result = provider.get_history_data(symbol, resolution, from_time, to_time, countback, **kwargs)
                 if result and result.get('s') in ('ok', 'no_data'):
+                    # 写入缓存
+                    try:
+                        expires_at = datetime.now(timezone.utc) + timedelta(minutes=CACHE_TTL_MINUTES)
+                        cache_entry = HistoryCache(
+                            symbol=symbol,
+                            resolution=resolution,
+                            cache_key=cache_key,
+                            data=json.dumps(result),
+                            provider=provider.get_name(),
+                            expires_at=expires_at,
+                        )
+                        # 删除旧缓存
+                        HistoryCache.query.filter_by(cache_key=cache_key).delete()
+                        db.session.add(cache_entry)
+                        db.session.commit()
+                        logger.info("[cache_write]key: %s, provider: %s", cache_key, provider.get_name())
+                    except Exception as e:
+                        logger.warning("[cache_write_failed]error: %s", e)
+                        db.session.rollback()
                     return result
                 logger.info("[provider_failed]name: %s, result: %s", provider.get_name(), result)
             except Exception as e:

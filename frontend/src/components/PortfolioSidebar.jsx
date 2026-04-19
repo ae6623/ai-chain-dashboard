@@ -682,15 +682,6 @@ export default function PortfolioSidebar({
     loadTree()
   }, [loadTree])
 
-  // Auto-expand the first top-level folder on initial load (if no saved expansion)
-  useEffect(() => {
-    if (treeState.status !== 'ready' || expanded.size > 0) return
-    const firstFolder = treeState.roots.find((node) => node.type === 'folder')
-    if (firstFolder) {
-      setExpanded(new Set([firstFolder.dentryId]))
-    }
-  }, [treeState.status, treeState.roots, expanded.size])
-
   function toggleExpand(dentryId) {
     setExpanded((current) => {
       const next = new Set(current)

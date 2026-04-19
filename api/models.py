@@ -334,3 +334,32 @@ class Symbol(db.Model):
 
     def __repr__(self):
         return f'<Symbol {self.symbol} ({self.exchange})>'
+
+
+class HistoryCache(db.Model):
+    """历史行情缓存，减少对外部 API 的调用"""
+    __tablename__ = 'history_cache'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    symbol = db.Column(db.String(32), nullable=False, index=True)
+    resolution = db.Column(db.String(8), nullable=False)
+    cache_key = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    data = db.Column(db.Text, nullable=False)
+    provider = db.Column(db.String(32), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+
+    @staticmethod
+    def make_cache_key(symbol, resolution, date_str=None):
+        if date_str is None:
+            from datetime import datetime, timezone
+            date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        return f"{symbol}:{resolution}:{date_str}"
+
+    def is_expired(self):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        if self.expires_at.tzinfo is None:
+            # naive datetime, 假定为 UTC
+            return now.replace(tzinfo=None) > self.expires_at
+        return now > self.expires_at
