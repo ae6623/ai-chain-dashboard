@@ -214,7 +214,10 @@ def ensure_watchlist_item_category_column():
 
 
 # ---------- Flask app ----------
-app = Flask(__name__)
+# 生产模式：托管前端 build 产物
+FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frontend', 'dist')
+
+app = Flask(__name__, static_folder=FRONTEND_DIST, static_url_path='')
 app.config.from_object('config.Config')
 CORS(app)
 db.init_app(app)
@@ -1381,6 +1384,26 @@ def history(vars):
 
 app.register_blueprint(api_v1_bp)
 app.register_blueprint(bp)
+
+
+# ---------- Serve frontend (production mode) ----------
+@app.route('/')
+def serve_index():
+    """返回前端入口页面"""
+    from flask import send_from_directory
+    return send_from_directory(app.static_folder, 'index.html')
+
+
+@app.route('/<path:path>')
+def serve_spa(path):
+    """生产模式：前端路由支持，返回 index.html"""
+    from flask import send_from_directory
+    # 尝试返回静态文件（JS、CSS、图片等）
+    static_file = os.path.join(app.static_folder, path)
+    if os.path.isfile(static_file):
+        return send_from_directory(app.static_folder, path)
+    # SPA 路由：返回 index.html
+    return send_from_directory(app.static_folder, 'index.html')
 
 
 # ---------- Live log stream (SSE) ----------
