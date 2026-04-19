@@ -22,9 +22,11 @@ from config import (
 
 logger = logging.getLogger("app")
 
-# 缓存配置（暂时关闭，cache_key 需要包含 countback/from/to 参数）
-CACHE_ENABLED = False
+# 缓存配置
+CACHE_ENABLED = True
 CACHE_TTL_MINUTES = 60
+# 快照请求（countback<=2）单独缓存，避免和图表请求冲突
+SNAPSHOT_CACHE_TTL_MINUTES = 5
 
 
 class UDFHistoryManager:
@@ -80,14 +82,14 @@ class UDFHistoryManager:
             symbol, resolution, from_time, to_time, countback, preferred_provider
         )
 
-        # 查缓存（暂时关闭，cache_key 需要包含 countback/from/to 参数）
-        if CACHE_ENABLED:
-            from models import HistoryCache, db
-            cache_key = HistoryCache.make_cache_key(symbol, resolution)
-            cached = HistoryCache.query.filter_by(cache_key=cache_key).first()
-            if cached and not cached.is_expired():
-                logger.info("[cache_hit]key: %s", cache_key)
-                return json.loads(cached.data)
+        # 查缓存（区分快照请求和图表请求）
+        from models import HistoryCache, db
+        is_snapshot = countback and countback <= 2 and not from_time
+        cache_key = f"{symbol}:{resolution}:{'snap' if is_snapshot else 'chart'}:{countback or 0}:{from_time or 0}:{to_time or 0}"
+        cached = HistoryCache.query.filter_by(cache_key=cache_key).first()
+        if cached and not cached.is_expired():
+            logger.info("[cache_hit]key: %s", cache_key)
+            return json.loads(cached.data)
 
         preferred = next((p for p in self.providers if p.get_name() == preferred_provider), None) if preferred_provider else None
         providers = ([preferred] if preferred else []) + [p for p in self.providers if p != preferred]
@@ -98,12 +100,13 @@ class UDFHistoryManager:
             try:
                 result = provider.get_history_data(symbol, resolution, from_time, to_time, countback, **kwargs)
                 if result and result.get('s') in ('ok', 'no_data'):
-                    # 写入缓存（暂时关闭）
+                    # 写入缓存
                     if CACHE_ENABLED:
                         try:
-                            from models import HistoryCache, db
-                            cache_key = HistoryCache.make_cache_key(symbol, resolution)
-                            expires_at = datetime.now(timezone.utc) + timedelta(minutes=CACHE_TTL_MINUTES)
+                            is_snapshot = countback and countback <= 2 and not from_time
+                            cache_key = f"{symbol}:{resolution}:{'snap' if is_snapshot else 'chart'}:{countback or 0}:{from_time or 0}:{to_time or 0}"
+                            ttl = SNAPSHOT_CACHE_TTL_MINUTES if is_snapshot else CACHE_TTL_MINUTES
+                            expires_at = datetime.now(timezone.utc) + timedelta(minutes=ttl)
                             cache_entry = HistoryCache(
                                 symbol=symbol,
                                 resolution=resolution,
@@ -115,7 +118,7 @@ class UDFHistoryManager:
                             HistoryCache.query.filter_by(cache_key=cache_key).delete()
                             db.session.add(cache_entry)
                             db.session.commit()
-                            logger.info("[cache_write]key: %s, provider: %s", cache_key, provider.get_name())
+                            logger.info("[cache_write]key: %s, provider: %s, ttl: %dmin", cache_key, provider.get_name(), ttl)
                         except Exception as e:
                             logger.warning("[cache_write_failed]error: %s", e)
                             db.session.rollback()
