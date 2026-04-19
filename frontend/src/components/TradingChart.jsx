@@ -340,6 +340,12 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
     options: { num: 200, algorithm: 'default', width: 30, position: 'right' },
   })
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+  const descriptionRef = useRef(description)
+  const initialSymbolRef = useRef(symbol)
+  const initialIntervalRef = useRef(interval)
+  useEffect(() => {
+    descriptionRef.current = description
+  }, [description])
   const syncHoverLegendStudyInput = useCallback((latestClose = latestCloseSnapshotRef.current) => {
     const chart = chartApiRef.current
     const studyId = openVsLatestCloseStudyIdRef.current
@@ -395,7 +401,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
         const datafeed = createUdfDatafeed({
           baseUrl: normalizedBaseUrl,
-          description,
+          description: descriptionRef.current,
           onBarsLoaded: storeBars,
           onBarUpdated: storeLatestBar,
         })
@@ -403,8 +409,8 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
         localWidget = new window.TradingView.widget({
           container: containerRef.current,
           autosize: true,
-          symbol,
-          interval: normalizeResolution(interval),
+          symbol: initialSymbolRef.current,
+          interval: normalizeResolution(initialIntervalRef.current),
           datafeed,
           library_path: libraryPath,
           custom_indicators_getter: (PineJS) => Promise.resolve(getCustomIndicators(PineJS)),
@@ -562,7 +568,49 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
         widgetRef.current = null
       }
     }
-  }, [description, interval, normalizedBaseUrl, storeBars, storeLatestBar, symbol, syncHoverLegendStudyInput])
+  }, [normalizedBaseUrl, storeBars, storeLatestBar, syncHoverLegendStudyInput])
+
+  // Switch symbol/interval on existing widget to preserve studies.
+  useEffect(() => {
+    const widget = widgetRef.current
+    if (!widget || !chartReady) return
+    const chart = chartApiRef.current
+    if (!chart) return
+
+    const targetSymbol = symbol
+    const targetResolution = normalizeResolution(interval)
+    let currentSymbol = ''
+    let currentResolution = ''
+    try {
+      currentSymbol = chart.symbol?.() || ''
+      currentResolution = String(chart.resolution?.() || '').toUpperCase()
+    } catch (error) {
+      console.debug('[TradingChart] read current symbol/resolution failed', error)
+    }
+
+    if (currentSymbol === targetSymbol && currentResolution === targetResolution) {
+      return
+    }
+
+    barsRef.current = []
+    hoveredBarTimeRef.current = null
+    latestCloseSnapshotRef.current = null
+
+    try {
+      if (typeof widget.setSymbol === 'function') {
+        widget.setSymbol(targetSymbol, targetResolution, () => {})
+      } else if (currentSymbol !== targetSymbol && typeof chart.setSymbol === 'function') {
+        chart.setSymbol(targetSymbol, () => {})
+        if (currentResolution !== targetResolution && typeof chart.setResolution === 'function') {
+          chart.setResolution(targetResolution, () => {})
+        }
+      } else if (typeof chart.setResolution === 'function') {
+        chart.setResolution(targetResolution, () => {})
+      }
+    } catch (error) {
+      console.error('[TradingChart] setSymbol/setResolution failed.', error)
+    }
+  }, [symbol, interval, chartReady])
 
   // Watch for VP study presence and input changes, then drive the overlay.
   useEffect(() => {
