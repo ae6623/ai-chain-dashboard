@@ -875,7 +875,7 @@ def build_stock_payload(symbol_string, symbol_obj=None):
     }
 
 
-def node_to_api_dict(dentry, inode, stock=None, markdown=None, include_content=True):
+def node_to_api_dict(dentry, inode, stock=None, markdown=None, include_content=True, symbol_obj=None):
     payload = {
         'dentryId': dentry.id,
         'inodeId': inode.id,
@@ -888,7 +888,7 @@ def node_to_api_dict(dentry, inode, stock=None, markdown=None, include_content=T
     }
     if inode.type == Inode.TYPE_STOCK:
         stock = stock if stock is not None else inode.stock_data
-        payload.update(build_stock_payload(stock.symbol if stock else None))
+        payload.update(build_stock_payload(stock.symbol if stock else None, symbol_obj=symbol_obj))
     elif inode.type == Inode.TYPE_MARKDOWN and include_content:
         markdown = markdown if markdown is not None else inode.markdown_data
         payload['content'] = markdown.content if markdown else ''
@@ -944,17 +944,23 @@ def get_portfolio_tree():
     stock_rows = {s.inode_id: s for s in DataStock.query.filter(DataStock.inode_id.in_(inode_ids)).all()} if inode_ids else {}
     md_rows = {m.inode_id: m for m in DataMarkdown.query.filter(DataMarkdown.inode_id.in_(inode_ids)).all()} if inode_ids else {}
 
+    # 批量预加载 Symbol，避免 N+1 查询
+    symbols = {s.symbol: s for s in Symbol.query.filter(Symbol.symbol.in_([s.symbol for s in stock_rows.values()])).all()} if stock_rows else {}
+
     nodes_by_id = {}
     roots = []
     for dentry in dentries:
         inode = inodes.get(dentry.child_id)
         if inode is None:
             continue
+        stock = stock_rows.get(inode.id)
+        symbol_obj = symbols.get(stock.symbol) if stock else None
         node = node_to_api_dict(
             dentry, inode,
-            stock=stock_rows.get(inode.id),
+            stock=stock,
             markdown=md_rows.get(inode.id),
             include_content=False,
+            symbol_obj=symbol_obj,
         )
         node['children'] = []
         nodes_by_id[dentry.id] = node
@@ -1387,20 +1393,18 @@ app.register_blueprint(bp)
 
 
 # ---------- Serve frontend (production mode) ----------
-@app.route('/')
-def serve_index():
-    """返回前端入口页面"""
-    from flask import send_from_directory
-    return send_from_directory(app.static_folder, 'index.html')
-
-
+# 注意：这个路由必须放在所有 API blueprint 之后，否则会拦截 API 请求
+@app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_spa(path):
     """生产模式：前端路由支持，返回 index.html"""
     from flask import send_from_directory
+    # API 请求不应该到这里（blueprint 已处理），但作为保险
+    if path.startswith('api/') or path.startswith('charting_library/'):
+        return jsonify({'error': 'Not found'}), 404
     # 尝试返回静态文件（JS、CSS、图片等）
     static_file = os.path.join(app.static_folder, path)
-    if os.path.isfile(static_file):
+    if path and os.path.isfile(static_file):
         return send_from_directory(app.static_folder, path)
     # SPA 路由：返回 index.html
     return send_from_directory(app.static_folder, 'index.html')
