@@ -5,6 +5,8 @@ import {
   openVsLatestCloseInputId,
   openVsLatestCloseStudyName,
 } from './chart/customIndicators'
+import VolumeProfileOverlay from './chart/VolumeProfileOverlay'
+import { VP_ALGORITHMS } from './chart/volumeProfile'
 
 const libraryPath = '/charting_library/'
 const libraryScriptPath = `${libraryPath}charting_library.js`
@@ -332,6 +334,15 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
   const latestCloseSnapshotRef = useRef(null)
   const barsRef = useRef([])
   const [loadError, setLoadError] = useState('')
+  const [chartReady, setChartReady] = useState(false)
+  const [vpEnabled, setVpEnabled] = useState(false)
+  const [vpSettingsOpen, setVpSettingsOpen] = useState(false)
+  const [vpOptions, setVpOptions] = useState({
+    num: 200,
+    algorithm: 'default',
+    width: 30,
+    position: 'right',
+  })
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
   const syncHoverLegendStudyInput = useCallback((latestClose = latestCloseSnapshotRef.current) => {
     const chart = chartApiRef.current
@@ -363,6 +374,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
     openVsLatestCloseStudyIdRef.current = null
     hoveredBarTimeRef.current = null
     latestCloseSnapshotRef.current = null
+    setChartReady(false)
 
     let cancelled = false
     let localWidget = null
@@ -458,6 +470,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
           const chart = localWidget.activeChart()
           chartApiRef.current = chart
+          setChartReady(true)
 
           // 强制应用图例设置
           chart.applyOverrides({
@@ -545,6 +558,7 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
       openVsLatestCloseStudyIdRef.current = null
       hoveredBarTimeRef.current = null
       latestCloseSnapshotRef.current = null
+      setChartReady(false)
       if (localWidget) {
         localWidget.remove()
       }
@@ -556,7 +570,89 @@ function TradingChart({ symbol, description, interval = '1D', baseUrl = defaultU
 
   return (
     <div className="price-chart tv-chart-shell">
+      <div className="tv-chart-indicator-bar">
+        <button
+          type="button"
+          className={'tv-indicator-toggle' + (vpEnabled ? ' active' : '')}
+          onClick={() => setVpEnabled((v) => !v)}
+          title="Volume Profile · 成交量分布"
+        >
+          VP
+        </button>
+        {vpEnabled ? (
+          <button
+            type="button"
+            className="tv-indicator-toggle"
+            onClick={() => setVpSettingsOpen((v) => !v)}
+            title="VP 设置"
+          >
+            ⚙
+          </button>
+        ) : null}
+      </div>
+
+      {vpEnabled && vpSettingsOpen ? (
+        <div className="tv-indicator-panel">
+          <div className="tv-indicator-panel-title">Volume Profile 设置</div>
+          <label>
+            <span>算法</span>
+            <select
+              value={vpOptions.algorithm}
+              onChange={(e) => setVpOptions((o) => ({ ...o, algorithm: e.target.value }))}
+            >
+              {VP_ALGORITHMS.map((a) => (
+                <option key={a} value={a}>
+                  {a === 'default' ? 'default · 简化' : a === 'classic' ? 'classic · 典型价加权' : 'delta · 收盘加权'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>精度 {vpOptions.num}</span>
+            <input
+              type="range"
+              min="20"
+              max="999"
+              step="10"
+              value={vpOptions.num}
+              onChange={(e) => setVpOptions((o) => ({ ...o, num: Number(e.target.value) }))}
+            />
+          </label>
+          <label>
+            <span>宽度 {vpOptions.width}%</span>
+            <input
+              type="range"
+              min="5"
+              max="70"
+              value={vpOptions.width}
+              onChange={(e) => setVpOptions((o) => ({ ...o, width: Number(e.target.value) }))}
+            />
+          </label>
+          <label>
+            <span>位置</span>
+            <select
+              value={vpOptions.position}
+              onChange={(e) => setVpOptions((o) => ({ ...o, position: e.target.value }))}
+            >
+              <option value="right">right · 右侧</option>
+              <option value="left">left · 左侧</option>
+            </select>
+          </label>
+        </div>
+      ) : null}
+
       <div ref={containerRef} className="tv-chart-container" />
+
+      {chartReady && chartApiRef.current && widgetRef.current ? (
+        <VolumeProfileOverlay
+          enabled={vpEnabled}
+          chart={chartApiRef.current}
+          widget={widgetRef.current}
+          barsRef={barsRef}
+          options={vpOptions}
+        />
+      ) : null}
+
       {loadError ? (
         <div className="tv-chart-fallback">
           <div>

@@ -783,6 +783,59 @@
   border-color: #1bbf9b;
 }
 
+.tv-indicator-panel {
+  position: absolute;
+  top: 44px;
+  right: 16px;
+  z-index: 6;
+  width: 220px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(9, 13, 19, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: #b1bdd2;
+  font: 400 12px/1.4 var(--font-body);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.tv-indicator-panel-title {
+  font: 600 12px/1 var(--font-body);
+  color: #d7e2f4;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+
+.tv-indicator-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tv-indicator-panel label > span {
+  font-size: 11px;
+  color: #9baec8;
+}
+
+.tv-indicator-panel select,
+.tv-indicator-panel input[type='range'] {
+  width: 100%;
+  background: rgba(20, 28, 40, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #d7e2f4;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font: 400 12px/1 var(--font-body);
+}
+
+.tv-indicator-panel input[type='range'] {
+  padding: 0;
+  height: 20px;
+  accent-color: #1bbf9b;
+}
+
 .tv-hover-metrics {
   position: absolute;
   top: 14px;
