@@ -6,7 +6,7 @@
 
 图表组件在：
 
-- `frontend2/src/components/TradingChart.jsx`
+- `frontend/src/components/TradingChart.jsx`
 
 当前图表接入方式：
 
@@ -16,9 +16,9 @@
 
 关键位置：
 
-- 图表初始化：`frontend2/src/components/TradingChart.jsx:321`
-- 默认均线挂载：`frontend2/src/components/TradingChart.jsx:380`
-- K 线数据映射：`frontend2/src/components/TradingChart.jsx:145`
+- 图表初始化：`frontend/src/components/TradingChart.jsx:321`
+- 默认均线挂载：`frontend/src/components/TradingChart.jsx:380`
+- K 线数据映射：`frontend/src/components/TradingChart.jsx:145`
 
 ## 2. 先判断指标属于哪一类
 
@@ -64,7 +64,7 @@ await chart.createStudy('Bollinger Bands', true, false)
 - `close`
 - `volume`
 
-对应代码在 `frontend2/src/components/TradingChart.jsx:145`。
+对应代码在 `frontend/src/components/TradingChart.jsx:145`。
 
 这意味着：
 
@@ -75,7 +75,7 @@ await chart.createStudy('Bollinger Bands', true, false)
 
 ### 4.1 在 widget 配置中加入 `custom_indicators_getter`
 
-在 `frontend2/src/components/TradingChart.jsx` 的 `new window.TradingView.widget({...})` 配置对象中加入：
+在 `frontend/src/components/TradingChart.jsx` 的 `new window.TradingView.widget({...})` 配置对象中加入：
 
 ```js
 custom_indicators_getter: (PineJS) =>
@@ -180,7 +180,7 @@ await chart.createStudy('My Custom MA', true, false, { length: 20 })
 
 建议把自定义指标从 `TradingChart.jsx` 中拆出来，例如新增：
 
-- `frontend2/src/components/chart/customIndicators.js`
+- `frontend/src/components/chart/customIndicators.js`
 
 示例：
 
