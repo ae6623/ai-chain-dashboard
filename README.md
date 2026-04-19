@@ -47,8 +47,8 @@ stock-platform/
 ### 1. 克隆代码
 
 ```bash
-git clone https://github.com/<your-name>/stock-platform.git
-cd stock-platform
+git clone https://github.com/haskaomni/ai-chain-dashboard.git
+cd ai-chain-dashboard
 ```
 
 ### 2. 启动后端
